@@ -1,0 +1,30 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+numpy="*"
+scipy="*"
+torch="*"
+torchaudio="*"
+torchvision="*"
+kymatio = "*"
+numba="*"
+
+pywavelets = "*"
+sklearn = "*"
+ptwt="*"
+
+[dev-packages]
+jupyter="*"
+jupyterlab="*"
+yapf = "*"
+pandas = "*"
+seaborn = "*"
+matplotlib="*"
+pylint = "*"
+ipykernel = "*"
+
+[requires]
+python_version = "3.10"
