@@ -46,9 +46,14 @@ def __coeffs(axs: Axes, coeffs: ndarray, orig_sv: ndarray, cutoff: float):
 	axs.set_xlabel("Coefficient")
 	axs.set_yscale("log")
 	x = range(len(coeffs))
-	q = sum(orig_sv > cutoff)-1
+	q = sum(orig_sv > cutoff) - 1
 	axs.scatter(x, coeffs, label="Culled", marker="1", linewidths=0.4)
-	axs.scatter(x, orig_sv, label="Original", marker="2" ,linewidths=0.4, alpha=0.3)
+	axs.scatter(x,
+	            orig_sv,
+	            label="Original",
+	            marker="2",
+	            linewidths=0.4,
+	            alpha=0.3)
 	axs.axvline(q, ls="--", color="red")
 	axs.legend()
 
@@ -60,7 +65,7 @@ def __diff(axs: Axes, original: ndarray, denoised: ndarray):
 	axs.set_xlabel("Spatial axis")
 	axs.set_ylabel("Temporal axis")
 
-	axs.matshow(diff, cmap="seismic")
+	axs.matshow(diff, cmap="binary")
 
 
 @jit(nogil=True, parallel=True)
@@ -187,8 +192,8 @@ def __time_and_space(time_axs: Axes, space_axs: Axes, original: ndarray,
 	space_axs.legend()
 
 
-def plot(original: ndarray, denoised: ndarray,  orig_sv: ndarray, result: ndarray, cutoff: float,
-         save: str | Path) -> None:
+def plot(original: ndarray, denoised: ndarray, orig_sv: ndarray,
+         result: ndarray, cutoff: float, save: str | Path) -> None:
 	"""Produes the relevant plots from the data."""
 
 	fig = plt.figure(figsize=(14, 14), dpi=500)

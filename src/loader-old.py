@@ -81,7 +81,7 @@ def just_raw(path):
 	'''Loads only the raw (unfilled) part of a matlab data file.'''
 	return scipy.io.loadmat(path, variable_names=["E_raw"])["E_raw"]
 
-
+@jit(parallel=True, nogil=True)
 def load_folder_raw(
         path: Union[str, pl.Path]) -> Generator[RawMeasurement, None, None]:
 	'''Used to load all the weird matlab files in a folder given by path. Only looks at files in the first level of the directory.'''
@@ -123,15 +123,11 @@ def make_np_dataset(
 	filled = (FilledMeasurement(replace_nan(measurement.Raw),
 	                            measurement.Filtered)
 	          for measurement in measurements)
-	# Pad them to MAX_SIZE.
-	padded = (PaddedMeasurement(padder(measurement.Filled, MAX_SIZE),
-	                            padder(measurement.Filtered, MAX_SIZE))
-	          for measurement in filled)
 
 	# Disentangle the tuples
 	with PPE() as pool:
-		pad = pool.map(lambda elem: elem.Padded, padded)
-		filt = pool.map(lambda elem: elem.Filtered, padded)
+		pad = pool.map(lambda elem: elem.Filled, filled)
+		filt = pool.map(lambda elem: elem.Filtered, filled)
 
 		#pad = (elem.Padded for elem in padded)
 		#filt = (elem.Filtered for elem in padded)

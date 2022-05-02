@@ -46,9 +46,17 @@ class MeasurementFolderLoader(DatasetFolder):
 		                                   matlab_compatible=True)
 		parsed_path = pathlib.Path(path)
 		filename = parsed_path.stem
+		entry = file[self.__entryToLoad]
 
+		# Ignore the redundant second half (spatial, i.e. over the x axis) of
+		# the signal.
+		half_index = (entry.shape[1] // 2)
+		entry = entry[:, :half_index]
+
+		# If we now when the actual measurement for the file begins we start
+		# with that timestep.
 		if filename in cutscenes:
 			starting_time = cutscenes[filename]
-			return file[self.__entryToLoad][starting_time:, :]
+			return entry[starting_time:, :]
 		else:
-			return file[self.__entryToLoad]
+			return entry

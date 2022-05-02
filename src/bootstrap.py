@@ -18,7 +18,7 @@ data_folder = Path("/home/simon/Code/quelltext/datasets/")
 def get_svd_stat(dataset):
 
 	# How often we sample for a specific size
-	TRIES = 2
+	TRIES = 10
 	PIECES = 10
 	SIZES = range(dataset.shape[0] // PIECES, dataset.shape[0] // 2,
 	              dataset.shape[0] // PIECES)
@@ -30,7 +30,7 @@ def get_svd_stat(dataset):
 	for size in SIZES:
 		t_vals[size] = []
 		for _ in range(TRIES):
-			print(f"size: {size} of {SIZES}, try: {_} of {TRIES}")
+			print(f"size: {size} of {SIZES}, try: {_+1} of {TRIES}")
 			selection = rng.choice(dataset,
 			                       replace=False,
 			                       shuffle=False,
@@ -59,8 +59,9 @@ for (ds, cat) in dsf:
 		        "size": size,
 		        "mean": mean(data),
 		        "median": median(data),
-		        "std": std(data)
+		        "std": std(data),
+		        "pieces": len(data)
 		    }))
-	break
+		print(store[-1])
 
 pd.DataFrame(store).to_csv("bootstrap.csv")
