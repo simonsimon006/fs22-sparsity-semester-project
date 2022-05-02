@@ -1,2 +1,6 @@
 *.npy
 *.mat
+*.png
+*.svg
+*.pyc
+loader-old.py
