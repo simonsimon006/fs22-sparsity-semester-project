@@ -30,7 +30,7 @@ def __make_axes(fig) -> List[Axes]:
 
 	axs: List[Axes] = [fig.add_subplot(pos) for pos in pos]
 	axs.append(
-	    fig.add_subplot(gs3[0], projection="3d")
+	    fig.add_subplot(gs3[0])
 	),  # One subplot on the bottom. Maybe the 3D thing needs to be added?)
 	return axs
 
@@ -65,7 +65,7 @@ def __diff(axs: Axes, original: ndarray, denoised: ndarray):
 	axs.set_xlabel("Spatial axis")
 	axs.set_ylabel("Temporal axis")
 
-	axs.matshow(diff, cmap="binary")
+	axs.matshow(diff.T, cmap="binary")
 
 
 @jit(nogil=True, parallel=True)
@@ -144,7 +144,7 @@ def __time_and_space(time_axs: Axes, space_axs: Axes, original: ndarray,
 	tmax, xmax = original.shape
 	# Display at time t
 	# 0.65mm stepsize
-	t = tmax // 2  # Talked with Yasmin about that. She says the time is right.
+	t = 1216  #tmax // 2  # Talked with Yasmin about that. She says the time is right.
 	xax = arange(0, 0.65 * len(original[t, :]), 0.65)
 	time_axs.set_title(f"Time fixed at timestep {t}.")
 	time_axs.plot(xax, denoised[t, :], label="Denoised", linewidth=MSIZE)
@@ -192,11 +192,18 @@ def __time_and_space(time_axs: Axes, space_axs: Axes, original: ndarray,
 	space_axs.legend()
 
 
+# The cutoff starting point has to be deducted.
+vip = {
+    "eps_S2-ZG_04": [(1216, "erster Riss"), (1785, "Zweiter Riss"),
+                     (15600, "Bewehrung teilplastisch")]
+}
+
+
 def plot(original: ndarray, denoised: ndarray, orig_sv: ndarray,
          result: ndarray, cutoff: float, save: str | Path) -> None:
 	"""Produes the relevant plots from the data."""
 
-	fig = plt.figure(figsize=(14, 14), dpi=500)
+	fig = plt.figure(figsize=(14, 14), dpi=300)
 	axs = __make_axes(fig)
 
 	__time_and_space(axs[0], axs[1], original, denoised)
@@ -212,3 +219,30 @@ def plot(original: ndarray, denoised: ndarray, orig_sv: ndarray,
 
 	fig.savefig(save)
 	plt.close(fig)
+
+
+def plot2(original, denoised):
+	#fig = plt.figure(figsize=(14, 14), dpi=300)
+	fig, axs = plt.subplots(
+	    1,
+	    4,
+	)
+	fig.set_dpi(400)
+	fig.set_size_inches(14, 6)
+	for x in range(3):
+		t = vip["eps_S2-ZG_04"][x][0]
+		des = vip["eps_S2-ZG_04"][x][1]
+		axs[x].plot(original[t, :],
+		            label="Original",
+		            linewidth=MSIZE,
+		            alpha=0.5)
+		axs[x].plot(denoised[t, :], label="Denoised", linewidth=MSIZE)
+		axs[x].legend()
+		axs[x].set_title(des)
+
+	x = original.shape[1] // 2
+	axs[3].plot(original[:, x], label="Original", linewidth=MSIZE, alpha=0.5)
+	axs[3].plot(denoised[:, x], label="Denoised", linewidth=MSIZE)
+	axs[3].legend()
+	axs[3].set_title(f"Time flow at pos {x}")
+	fig.savefig("zg-ts.png", dpi=300)

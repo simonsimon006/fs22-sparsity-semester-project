@@ -15,6 +15,7 @@ tensorflow="*"
 pywavelets = "*"
 sklearn = "*"
 ptwt="*"
+jax = "*"
 
 [dev-packages]
 jupyter="*"

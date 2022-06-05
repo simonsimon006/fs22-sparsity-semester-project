@@ -5,3 +5,4 @@
 *.pyc
 loader-old.py
 DeSpaWN/
+*.csv
