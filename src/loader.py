@@ -1,7 +1,7 @@
 """Implements loading and imputing the data"""
 
 import pathlib
-from typing import Dict
+from typing import Dict, Tuple
 
 from numpy import ndarray
 from scipy.io import loadmat
@@ -17,11 +17,12 @@ cutscenes = {
 }
 
 
-def __transform__(measurement: ndarray) -> Tensor:
+def __transform__(
+        measurement: Tuple[ndarray, ndarray]) -> Tuple[Tensor, Tensor]:
 	"""Transforms the image to a tensor and applies imputing."""
 	imputer = KNNImputer(n_neighbors=3, weights="distance", copy=False)
-	measurement = imputer.fit_transform(measurement)
-	return from_numpy(measurement)
+	measurement_imp = imputer.fit_transform(measurement[0])
+	return (from_numpy(measurement_imp), from_numpy(measurement[1]))
 
 
 class MeasurementFolderLoader(DatasetFolder):
@@ -29,7 +30,7 @@ class MeasurementFolderLoader(DatasetFolder):
 	root/CLASS/measurement.mat where class is e.g. reinforced concrete."""
 
 	# Which entry from the .mat dict to load
-	__entryToLoad = "E_raw"
+	__entryToLoad = ["E_raw", "E_filt"]
 
 	# Relevant file extensions
 	extensions = ("mat", )
@@ -40,23 +41,25 @@ class MeasurementFolderLoader(DatasetFolder):
 		                 transform=__transform__,
 		                 extensions=self.extensions)
 
-	def __loader__(self, path: str) -> ndarray:
+	def __loader__(self, path: str) -> Tuple[ndarray, ndarray]:
 		file: Dict[str, ndarray] = loadmat(path,
 		                                   variable_names=self.__entryToLoad,
 		                                   matlab_compatible=True)
 		parsed_path = pathlib.Path(path)
 		filename = parsed_path.stem
-		entry = file[self.__entryToLoad]
+		entry = file[self.__entryToLoad[0]]
+		filt = file[self.__entryToLoad[1]]
 
 		# Ignore the redundant second half (spatial, i.e. over the x axis) of
 		# the signal.
 		half_index = (entry.shape[1] // 2)
 		entry = entry[:, :half_index]
+		filt = filt[:, :half_index]
 
 		# If we now when the actual measurement for the file begins we start
 		# with that timestep.
 		if filename in cutscenes:
 			starting_time = cutscenes[filename]
-			return entry[starting_time:, :]
+			return (entry[starting_time:, :], filt[starting_time:, :])
 		else:
-			return entry
+			return (entry, filt)
