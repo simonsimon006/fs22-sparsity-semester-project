@@ -42,7 +42,7 @@ class MeasurementFolderLoader(DatasetFolder):
 		                 extensions=self.extensions)
 
 	def __loader__(self, path: str) -> Tuple[ndarray, ndarray]:
-		file: Dict[str, ndarray] = loadmat(path,
+		file: Dict[str, ndarray] = loadmat(path[0],
 		                                   variable_names=self.__entryToLoad,
 		                                   matlab_compatible=True)
 		parsed_path = pathlib.Path(path)

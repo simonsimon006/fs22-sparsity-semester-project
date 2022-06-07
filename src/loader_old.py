@@ -1,8 +1,10 @@
 '''Provides functions to load and preprocess the data.'''
+from functools import reduce
 import pathlib as pl
 from collections import namedtuple
+from concurrent.futures import ThreadPoolExecutor as TPE
 from concurrent.futures import ProcessPoolExecutor as PPE
-from typing import Dict, Generator, Tuple, Union
+from typing import Dict, Generator, Iterator, Tuple, Union
 
 import numpy as np
 import scipy.io
@@ -15,6 +17,13 @@ MAX_SIZE = 8192
 RawMeasurement = namedtuple("RawMeasurement", ["Raw", "Filtered"])
 FilledMeasurement = namedtuple("FilledMeasurement", ["Filled", "Filtered"])
 PaddedMeasurement = namedtuple("PaddedMeasurement", ["Padded", "Filtered"])
+
+cutscenes = {
+    "eps_yl_w3": 770,
+    "eps_yl_k3": 280,
+    "eps_S3-ZG_H03": 500,
+    "eps_S2-ZG_04": 850
+}
 
 
 @jit(parallel=True, nogil=True)
@@ -55,8 +64,10 @@ def other_padder(array: ndarray, end_width: int = MAX_SIZE) -> ndarray:
 
 def replace_nan(array: ndarray) -> ndarray:
 	'''Replaces NaN in the given dataset.'''
-	imputer = KNNImputer(n_neighbors=2, weights="distance", copy=True)
-	return imputer.fit_transform(array)
+	imputer = KNNImputer(n_neighbors=4, weights="distance", copy=False)
+	imp = imputer.fit_transform(array)
+	print("imputed")
+	return imp
 
 
 @jit(parallel=True)
@@ -64,16 +75,22 @@ def load_train(path: str) -> Tuple[ndarray, ndarray]:
 	'''Loads the filled and filtered dataset from the matlab file under the specified path.'''
 	data: Dict[str, ndarray] = scipy.io.loadmat(
 	    path, variable_names=["E_filled", "E_filt"])
-	return data["E_filled"], data["E_filt"]
+	return data["E_filled"].T, data["E_filt"].T
 
 
-@jit(parallel=True, nogil=True)
+#@jit(parallel=True, nogil=True)
 def load_raw(path: Union[str, pl.Path]) -> RawMeasurement:
 	'''Loads the raw (unfilled) and filtered parts of a matlab data file.'''
 	data: Dict[str,
 	           ndarray] = scipy.io.loadmat(path,
-	                                       variable_names=["E_raw", "E_filt"])
-	return RawMeasurement(data["E_raw"], data["E_filt"])
+	                                       variable_names=["E_raw", "E_filt"],
+	                                       mat_dtype=True)
+	filename = pl.Path(path).stem
+	print(f"Loaded {filename}")
+	starting_cut = 0 if not filename in cutscenes else cutscenes[filename]
+	res = RawMeasurement(data["E_raw"][starting_cut:, :].T,
+	                     data["E_filt"][starting_cut:, :].T)
+	return res
 
 
 @jit(parallel=True, nogil=True)
@@ -81,35 +98,48 @@ def just_raw(path):
 	'''Loads only the raw (unfilled) part of a matlab data file.'''
 	return scipy.io.loadmat(path, variable_names=["E_raw"])["E_raw"]
 
-@jit(parallel=True, nogil=True)
-def load_folder_raw(
-        path: Union[str, pl.Path]) -> Generator[RawMeasurement, None, None]:
+
+#@jit(parallel=True, nogil=True)
+def load_folder_raw(path: Union[str, pl.Path]) -> Iterator[RawMeasurement]:
 	'''Used to load all the weird matlab files in a folder given by path. Only looks at files in the first level of the directory.'''
 	p = pl.Path(path)
-	data = (load_raw(measurement) for measurement in p.iterdir()
-	        if measurement.is_file())
+	with TPE() as pool:
+		data = pool.map(
+		    load_raw, (measurement
+		               for measurement in p.iterdir() if measurement.is_file()))
 	return data
+
+
+def dumb(meas):
+	print(meas.Raw.dtype)
+	res = FilledMeasurement(replace_nan(meas.Raw), meas.Filtered)
+	print(res.Filled.dtype)
+	return res
 
 
 def make_tf_dataset(
         measurements: Generator[RawMeasurement, None, None]) -> tf.data.Dataset:
 	'''This function transforms a folder of the weird matlab files, represented by measurements, into one big, imputed and padded TensorFlow dataset.'''
+
 	# Impute the NaN values.
-	filled = (FilledMeasurement(replace_nan(measurement.Raw),
-	                            measurement.Filtered)
-	          for measurement in measurements)
-	# Pad them to MAX_SIZE.
-	padded = (PaddedMeasurement(padder(measurement.Filled, MAX_SIZE),
-	                            padder(measurement.Filtered, MAX_SIZE))
-	          for measurement in filled)
+	with PPE(4) as pool:
+		filled = pool.map(dumb, measurements)
 
-	# Disentangle the tuples
-	pad = [elem.Padded for elem in padded]
-	filt = [elem.Filtered for elem in padded]
+	datasets = (tf.data.Dataset.from_tensor_slices((elem.Filled, elem.Filtered))
+	            for elem in filled)
 
-	# Concatenate them.
-	flat_pad = concatenate(pad, axis=0)
-	flat_filt = concatenate(filt, axis=0)
+	ds = reduce(lambda acc, new: acc.concatenate(new), datasets)
+
+	print(ds.cardinality())
+	return ds
+
+	with PPE(6) as pool:
+		pad = pool.map(lambda elem: elem.Filled, filled)
+		filt = pool.map(lambda elem: elem.Filtered, filled)
+
+		# Concatenate them.
+		flat_pad = concatenate(pad, axis=0)
+		flat_filt = concatenate(filt, axis=0)
 
 	# Make them into a dataset.
 	return tf.data.Dataset.from_tensor_slices((flat_pad, flat_filt))
@@ -125,12 +155,9 @@ def make_np_dataset(
 	          for measurement in measurements)
 
 	# Disentangle the tuples
-	with PPE() as pool:
+	with PPE(6) as pool:
 		pad = pool.map(lambda elem: elem.Filled, filled)
 		filt = pool.map(lambda elem: elem.Filtered, filled)
-
-		#pad = (elem.Padded for elem in padded)
-		#filt = (elem.Filtered for elem in padded)
 
 		# Concatenate them.
 		flat_pad = concatenate(pad, axis=0)
