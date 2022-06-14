@@ -6,3 +6,10 @@
 loader-old.py
 DeSpaWN/
 *.csv
+dataset/
+dataset-broken/
+model*
+concrete/
+steelbar/
+*.jl
+*.code-workspace

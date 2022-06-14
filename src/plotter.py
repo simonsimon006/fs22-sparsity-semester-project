@@ -43,7 +43,7 @@ def __spectral_transform(pred: ndarray,
 
 def __coeffs(axs: Axes, coeffs: ndarray, orig_sv: ndarray, cutoff: float):
 	axs.set_ylabel("Strength")
-	axs.set_xlabel("Coefficient")
+	axs.set_xlabel("Wav coefficient")
 	axs.set_yscale("log")
 	x = range(len(coeffs))
 	q = sum(orig_sv > cutoff) - 1
@@ -131,7 +131,7 @@ def __diag(axs: Axes, original: ndarray, denoised: ndarray):
 	axs.legend()
 
 
-MSIZE = 0.3
+MSIZE = 0.8
 
 
 def __time_and_space(time_axs: Axes, space_axs: Axes, original: ndarray,
@@ -192,10 +192,17 @@ def __time_and_space(time_axs: Axes, space_axs: Axes, original: ndarray,
 	space_axs.legend()
 
 
-# The cutoff starting point has to be deducted.
+# The cutoff starting point has to be deducted. If a number is subtracted it is
+# the cutoff value. See Yasmin.
 vip = {
-    "eps_S2-ZG_04": [(1216, "erster Riss"), (1785, "Zweiter Riss"),
-                     (15600, "Bewehrung teilplastisch")]
+    "eps_S2-ZG_04": [(366, "erster Riss"), (935, "Zweiter Riss"),
+                     (14750, "Bewehrung teilplastisch")],
+    "eps_yl_k3": [
+        (600 - 280, "elastische Dehnung"),
+        (1700 - 280, "vollplastisch 1"),
+        (3000 - 280, "vollplastisch 2"),
+        (4800 - 280, "vollplastisch 3"),
+    ],
 }
 
 
@@ -215,23 +222,23 @@ def plot(original: ndarray, denoised: ndarray, orig_sv: ndarray,
 	print("diag done")
 
 	__diff(axs[4], original, denoised)
-	print("diif done")
+	print("diff done")
 
 	fig.savefig(save)
 	plt.close(fig)
 
 
-def plot2(original, denoised):
+def plot2(original, denoised, name):
 	#fig = plt.figure(figsize=(14, 14), dpi=300)
 	fig, axs = plt.subplots(
 	    1,
 	    4,
 	)
 	fig.set_dpi(400)
-	fig.set_size_inches(14, 6)
+	fig.set_size_inches(20, 6)
 	for x in range(3):
-		t = vip["eps_S2-ZG_04"][x][0]
-		des = vip["eps_S2-ZG_04"][x][1]
+		t = vip[name][x][0]
+		des = vip[name][x][1]
 		axs[x].plot(original[t, :],
 		            label="Original",
 		            linewidth=MSIZE,
@@ -245,4 +252,4 @@ def plot2(original, denoised):
 	axs[3].plot(denoised[:, x], label="Denoised", linewidth=MSIZE)
 	axs[3].legend()
 	axs[3].set_title(f"Time flow at pos {x}")
-	fig.savefig("zg-ts.png", dpi=300)
+	fig.savefig(f"den-{name}.png")
