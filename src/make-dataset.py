@@ -7,7 +7,7 @@ from loader_old import make_tf_dataset, load_folder_raw
 from tensorflow.config import set_visible_devices
 from tensorflow.data.experimental import save
 
-DATA_PATH = "dataset/"
+DATA_PATH = "concrete/"
 SET_PATHS = "/home/simon/Code/quelltext/datasets/"
 set_visible_devices([], 'GPU')
 #dsf = MeasurementFolderLoader(SET_PATHS)

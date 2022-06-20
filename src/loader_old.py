@@ -88,8 +88,10 @@ def load_raw(path: Union[str, pl.Path]) -> RawMeasurement:
 	filename = pl.Path(path).stem
 	print(f"Loaded {filename}")
 	starting_cut = 0 if not filename in cutscenes else cutscenes[filename]
-	res = RawMeasurement(data["E_raw"][starting_cut:, :].T,
-	                     data["E_filt"][starting_cut:, :].T)
+	# BEcause the measurement is redunant in the spatial axis (doubled).
+	spatial_half_index = data["E_raw"].shape[1] // 2
+	res = RawMeasurement(data["E_raw"][starting_cut:, :spatial_half_index].T,
+	                     data["E_filt"][starting_cut:, :spatial_half_index].T)
 	return res
 
 
@@ -111,9 +113,7 @@ def load_folder_raw(path: Union[str, pl.Path]) -> Iterator[RawMeasurement]:
 
 
 def dumb(meas):
-	print(meas.Raw.dtype)
 	res = FilledMeasurement(replace_nan(meas.Raw), meas.Filtered)
-	print(res.Filled.dtype)
 	return res
 
 
