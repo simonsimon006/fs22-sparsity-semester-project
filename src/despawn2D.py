@@ -1,61 +1,28 @@
-from cmath import pi
 from functools import reduce
-from math import log2, floor, ceil
-from os import unsetenv
-from sys import orig_argv
-from timeit import repeat
+from math import ceil, log2
 
-from torch import (Tensor, clone, concat, exp, flip, nn, squeeze, tensor,
-                   unsqueeze, zeros, conj)
+from pywt import Wavelet
+from torch import Tensor, concat, conj, flip, nn, tensor, zeros, device
 from torch.fft import irfft, rfft
-
-from torch.nn.functional import conv1d, pad, sigmoid, conv_transpose1d
-from torch.nn.parameter import Parameter
 from torch.nn import ReplicationPad1d
+from torch.nn.functional import sigmoid
+from torch.nn.parameter import Parameter
 
 
-def sane_circular_pad(input: Tensor, to_pad):
-	'''The circular padding function in PyTorch only allows the input to wrap around once. Fascists.'''
-	in_len = input.shape[-1]
-
-	# First calculate how often we can repeat the tensors last dimension
-	# before we need to pad the rest. The first plus one is because PyTorchs
-	# repeat
-	# wants to how many times in total the tensor should be there. Thus, one
-	# for the original length and then plus how many times we want to add.
-	# The second plus one is because we want to "overpad" and then discard the
-	# redundant elements. I do not like PyTorchs pad function.
-	to_repeat = to_pad // in_len + 1 + 1
-
-	# We create a mask of ones where we then multiply the last entry by
-	# to_repeat because .repeat() wants to know which dimensions it shall
-	# keep (i.e. entry in the mask == 1) and which to repeat (i.e. entry in the
-	# mask > 1).
-
-	repeated = input.repeat((1, to_repeat))
-
-	return repeated[:, :(in_len + to_pad)]
-
-
-def compute_wavelet(scaling: Tensor) -> Tensor:
+def compute_wavelet(scaling_rec: Tensor) -> Tensor:
 	'''Computes the wavelet filter coefficients from the scaling coefficients. The formula is g_k = h_(M-k-1) where M is the filter length of h. The formula stems from a paper.'''
 
 	# flip copies / clones the input.
-	g = flip(scaling, (-1, ))
+	g = flip(scaling_rec, (-1, ))
 	g[1::2] *= -1
 
 	return g
 
 
-# Only required for biorthogonal instead of orthogonal wavelets.
-def compute_scaling_synthesis(scaling: Tensor) -> Tensor:
-	return flip(scaling, (-1, ))
-
-
 def compute_wavelet_synthesis(scaling: Tensor) -> Tensor:
 	# flip copies / clones the input.
 	g = flip(scaling, (-1, ))
-	g[::2] *= -1
+	g[1::2] *= -1
 
 	return g
 
@@ -80,15 +47,15 @@ def convolve(input, filter, transpose=False):
 class ForwardTransformLayer(nn.Module):
 	'''Expects a tensor with shape (n, m) and computes one forward step over each row, i.e. it iterates over all values of 0...n and then computes the lifting. input_length needs to be equal to m.'''
 
-	def __init__(self, scaling):
+	def __init__(self, scaling, scaling_rec):
 		super(ForwardTransformLayer, self).__init__()
 
 		# Store the scaling function filter.
 		self.scaling = scaling
+		self.scaling_rec = scaling_rec
 
 	def forward(self, input):
-
-		wavelet = compute_wavelet(self.scaling)
+		wavelet = compute_wavelet(self.scaling_rec)
 
 		details = convolve(input, wavelet)
 		approximation = convolve(input, self.scaling)
@@ -99,16 +66,19 @@ class ForwardTransformLayer(nn.Module):
 class BackwardTransformLayer(nn.Module):
 	'''Expects a tensor with shape (n, m) and computes one backward step over each row, i.e. it iterates over all values of 0...n and then computes the lifting. input_length needs to be equal to m.'''
 
-	def __init__(self, scaling):
+	def __init__(self, scaling, scaling_rec):
 		super(BackwardTransformLayer, self).__init__()
 
 		# Store the filters.
 		self.scaling = scaling
+		self.scaling_rec = scaling_rec
+
+		self.transpose = True
 
 	def forward(self, input):
 
 		# Compute synthesis filter coefficients
-		wavelet_synthesis = compute_wavelet(self.scaling)
+		wavelet_synthesis = compute_wavelet_synthesis(self.scaling_rec)
 		scaling_synthesis = self.scaling
 
 		# Pad the input to an even size.
@@ -129,10 +99,10 @@ class BackwardTransformLayer(nn.Module):
 		# Convolve with the reconstruction filters.
 		details_rec = convolve(filled_details,
 		                       wavelet_synthesis,
-		                       transpose=True)
+		                       transpose=self.transpose)
 		approx_rec = convolve(filled_approximation,
 		                      scaling_synthesis,
-		                      transpose=True)
+		                      transpose=self.transpose)
 
 		return details_rec + approx_rec
 
@@ -155,17 +125,25 @@ class Despawn2D(nn.Module):
 
 	def __init__(self,
 	             levels: int,
-	             scaling: Tensor,
-	             adapt_filters: bool = True):
+	             wavelet_name: str,
+	             adapt_filters: bool = True,
+	             device: str | device = "cpu"):
 		super(Despawn2D, self).__init__()
-		self.scaling = Parameter(scaling.repeat(levels, 1),
-		                         requires_grad=adapt_filters)
+
+		# Extract filter coefficients from the wavelet object.
+		scaling = tensor(Wavelet(wavelet_name).dec_hi, device=device)
+		scaling_rec = tensor(Wavelet(wavelet_name).rec_hi, device=device)
+
+		self.scaling = Parameter(scaling.repeat(levels, 1), requires_grad=True)
+		self.scaling_rec = Parameter(scaling_rec.repeat(levels, 1),
+		                             requires_grad=adapt_filters)
 
 		self.levels = levels
 
 		# Define forward transforms
 		self.forward_transforms = [
-		    ForwardTransformLayer(self.scaling[level, :])
+		    ForwardTransformLayer(self.scaling[level, :],
+		                          self.scaling_rec[level, :])
 		    for level in range(self.levels)
 		]
 
@@ -179,7 +157,8 @@ class Despawn2D(nn.Module):
 
 		# Define backward transformations
 		self.backward_transforms = [
-		    BackwardTransformLayer(self.scaling[level, :])
+		    BackwardTransformLayer(self.scaling[level, :],
+		                           self.scaling_rec[level, :])
 		    for level in reversed(range(self.levels))
 		]
 
@@ -205,8 +184,8 @@ class Despawn2D(nn.Module):
 		wav_coeffs.append(approximation)
 
 		# Filter the coefficients.
-		filtered = list(map(self.threshold, wav_coeffs))
-		#filtered = list(wav_coeffs)
+		#filtered = list(map(self.threshold, wav_coeffs))
+		filtered = list(wav_coeffs)
 
 		# Transform the filtered inputs back.
 		approximation = filtered.pop()
