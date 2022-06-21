@@ -9,13 +9,10 @@ scipy="*"
 torch="*"
 torchaudio="*"
 torchvision="*"
-kymatio = "*"
 numba="*"
-tensorflow="*"
 pywavelets = "*"
 sklearn = "*"
 ptwt="*"
-jax = "*"
 
 [dev-packages]
 jupyter="*"
