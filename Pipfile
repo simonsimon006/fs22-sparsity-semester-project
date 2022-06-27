@@ -13,6 +13,7 @@ numba="*"
 pywavelets = "*"
 sklearn = "*"
 ptwt="*"
+ssqueezepy = "*"
 
 [dev-packages]
 jupyter="*"

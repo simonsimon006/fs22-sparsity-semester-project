@@ -1,15 +1,10 @@
-from cmath import pi
 from functools import reduce
-from math import log2, floor, ceil
-from os import unsetenv
-from sys import orig_argv
-from timeit import repeat
+from math import log2, ceil
 
-from torch import (Tensor, clone, concat, exp, flip, nn, squeeze, tensor,
-                   unsqueeze, zeros, conj)
+from torch import (Tensor, concat, flip, nn, tensor, zeros, conj)
 from torch.fft import irfft, rfft
 
-from torch.nn.functional import conv1d, pad, sigmoid, conv_transpose1d
+from torch.nn.functional import sigmoid
 from torch.nn.parameter import Parameter
 from torch.nn import ReplicationPad1d
 
@@ -67,6 +62,7 @@ def convolve(input, filter, transpose=False):
 	input_length = input.shape[-1]
 
 	ra = rfft(input)
+
 	if transpose:
 		rb = conj(rfft(filter, n=input_length))
 	else:

@@ -1,14 +1,18 @@
 """Does all the plotting."""
 
+from functools import reduce
 from pathlib import Path
 from typing import List, Tuple
 
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
+import seaborn as sb
 from matplotlib.axes import Axes
 from numba import jit
-from numpy import absolute, arange, meshgrid, ndarray, subtract, square, NaN, log10
+from numpy import (NaN, absolute, arange, array, log10, ndarray, square,
+                   subtract, concatenate, repeat, kron, log2, ceil)
 from numpy.fft import rfft
+from pywt import wavedec, cwt
 from scipy.stats import pearsonr
 
 
@@ -18,14 +22,15 @@ def __make_axes(fig) -> List[Axes]:
 	# its subplots.
 	gs0 = gridspec.GridSpec(3, 1, figure=fig)
 	gs1 = gridspec.GridSpecFromSubplotSpec(1, 2, subplot_spec=gs0[0])
-	gs2 = gridspec.GridSpecFromSubplotSpec(1, 2, subplot_spec=gs0[1])
+	gs2 = gridspec.GridSpecFromSubplotSpec(1, 3, subplot_spec=gs0[1])
 	gs3 = gridspec.GridSpecFromSubplotSpec(1, 1, subplot_spec=gs0[2])
 
 	pos = [
 	    gs1[0],
 	    gs1[1],  # Two subplots on the top.
 	    gs2[0],
-	    gs2[1],  # Two subplots in the middle.
+	    gs2[1],  # Three subplots in the middle.
+	    gs2[2],
 	]
 
 	axs: List[Axes] = [fig.add_subplot(pos) for pos in pos]
@@ -62,10 +67,10 @@ def __diff(axs: Axes, original: ndarray, denoised: ndarray):
 	diff = absolute(subtract(original, denoised))
 	axs.set_title("original-denoised logscaled")
 
-	axs.set_xlabel("Spatial axis")
-	axs.set_ylabel("Temporal axis")
+	axs.set_xlabel("Time")
+	axs.set_ylabel("Amplitude")
 
-	axs.matshow(diff.T, cmap="binary")
+	axs.plot(diff, label="Difference between denoised and subtracted signal")
 
 
 @jit(nogil=True, parallel=True)
@@ -103,15 +108,15 @@ def __diag(axs: Axes, original: ndarray, denoised: ndarray):
 	           linestyle="--",
 	           color="yellow",
 	           transform=axs.transAxes)
-	axs.set_ylabel("Original")
+	axs.set_ylabel("True")
 	axs.set_xlabel("Denoised")
 	axs.set_title("Signal comparision")
 
 	axs.set_aspect("equal", 'box')
-	'''var, corr = __var_and_corr(denoised, original)
+	var, corr = __var_and_corr(denoised, original)
 	axs.text(
 	    0.7,
-	    0.9,
+	    0.1,
 	    f"Var: {var:.3f}\nCorr: {corr:.3f}",
 	    bbox={
 	        'alpha': 0.2,
@@ -120,7 +125,7 @@ def __diag(axs: Axes, original: ndarray, denoised: ndarray):
 	        "facecolor": "blue"
 	    },
 	    transform=axs.transAxes,
-	)'''
+	)
 
 	xll, xul = axs.get_xlim()
 	yll, yul = axs.get_ylim()
@@ -154,15 +159,6 @@ def __time_and_space(time_axs: Axes, space_axs: Axes, original: ndarray,
 	              linewidth=MSIZE,
 	              alpha=0.3,
 	              color="red")
-	'''
-	time_axs.plot(
-		xax,
-		filtered,
-		label="Hand denoised",
-		#linewidth=msize,
-		ls="dotted",
-		color="red")
-	'''
 	time_axs.set_ylabel("Strain")
 	time_axs.set_xlabel("Location/mm")
 	time_axs.legend()
@@ -179,14 +175,6 @@ def __time_and_space(time_axs: Axes, space_axs: Axes, original: ndarray,
 	               linewidth=MSIZE,
 	               alpha=0.3,
 	               color="red")
-	'''space_axs.plot(
-		xax,
-		filtered,
-		label="Hand denoised",
-		#linewidth=msize,
-		ls="dotted",
-		color="red")
-	'''
 	space_axs.set_ylabel("Strain")
 	space_axs.set_xlabel("Timesteps")
 	space_axs.legend()
@@ -206,26 +194,71 @@ vip = {
 }
 
 
-def plot(original: ndarray, denoised: ndarray, orig_sv: ndarray,
-         result: ndarray, cutoff: float, save: str | Path) -> None:
+def plot_wavedec(time: ndarray,
+                 true: ndarray,
+                 noisy: ndarray,
+                 denoised: ndarray,
+                 save: str | Path,
+                 name_wavelet="db20") -> None:
 	"""Produes the relevant plots from the data."""
 
-	fig = plt.figure(figsize=(14, 14), dpi=300)
+	MODE = "periodization"
+	fig = plt.figure(figsize=(16, 14), dpi=300)
 	axs = __make_axes(fig)
 
-	__time_and_space(axs[0], axs[1], original, denoised)
-	print("TS done")
-	__coeffs(axs[2], result, orig_sv, cutoff)
-	print("cf done")
+	axs[0].plot(time, true, label="True signal", linewidth=MSIZE, alpha=0.7)
+	axs[0].plot(time, noisy, label="Noisy signal", linewidth=MSIZE, alpha=0.3)
+	axs[0].plot(time,
+	            denoised,
+	            label="Denoised signal",
+	            linewidth=0.8 * MSIZE,
+	            alpha=0.7)
+	axs[0].legend()
 
-	__diag(axs[3], original, denoised)
-	print("diag done")
+	__diag(axs[1], true, denoised)
+	'''
+	dec_true = wavedec(true, name_wavelet, mode=MODE)
+	dec_noisy = wavedec(noisy, name_wavelet, mode=MODE)
+	dec_denoised = wavedec(denoised, name_wavelet, mode=MODE)
+	'''
+	# Compute the scales. I hope this makes sense.
+	scales = 2**array(range(int(ceil(log2(true.shape[0])))))
+	dec_true, _ = cwt(true, scales, name_wavelet)
+	dec_noisy, _ = cwt(noisy, scales, name_wavelet)
+	dec_denoised, _ = cwt(denoised, scales, name_wavelet)
 
-	__diff(axs[4], original, denoised)
-	print("diff done")
+	axs[2].set_title("Noisy scalogram")
+	make_scalogram(axs[2], dec_noisy)
 
+	axs[3].set_title("True scalogram")
+	make_scalogram(axs[3], dec_true)
+
+	axs[4].set_title("Denoised scalogram")
+	make_scalogram(axs[4], dec_denoised)
+
+	__diff(axs[5], true, denoised)
 	fig.savefig(save)
 	plt.close(fig)
+
+
+def make_scalogram(ax, wavedec_coeffs):
+	'''max_scale_size = len(wavedec_coeffs[-1])
+
+	rows = []
+	for row in wavedec_coeffs:
+		row_len = len(row)
+		multiples = max_scale_size // row_len
+		kr = repeat(1, multiples)
+		row = kron(row, kr)
+		rows.append(row)
+	'''
+	ax.set_xlabel("Shifts")
+	ax.set_ylabel("Scales")
+	ax.imshow(array(wavedec_coeffs),
+	          aspect="auto",
+	          interpolation="nearest",
+	          cmap="magma")
+	#return rows
 
 
 def plot2(original, denoised, name):
