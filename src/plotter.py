@@ -12,22 +12,26 @@ from numba import jit
 from numpy import (NaN, absolute, arange, array, log10, ndarray, square,
                    subtract, concatenate, repeat, kron, log2, ceil)
 from numpy.fft import rfft
-from pywt import wavedec, cwt
+from ssqueezepy import cwt
 from scipy.stats import pearsonr
+
+vip = {
+    "eps_S2-ZG_04": [(1216, "erster Riss"), (1785, "Zweiter Riss"),
+                     (15600, "Bewehrung teilplastisch")]
+}
 
 
 # From the previous project
-def __make_axes(fig) -> List[Axes]:
+def __make_axes(fig, upper_subs=2) -> List[Axes]:
 	# Define the structure of the figure i.e. the position and number of
 	# its subplots.
 	gs0 = gridspec.GridSpec(3, 1, figure=fig)
-	gs1 = gridspec.GridSpecFromSubplotSpec(1, 2, subplot_spec=gs0[0])
+	gs1 = gridspec.GridSpecFromSubplotSpec(1, upper_subs, subplot_spec=gs0[0])
 	gs2 = gridspec.GridSpecFromSubplotSpec(1, 3, subplot_spec=gs0[1])
 	gs3 = gridspec.GridSpecFromSubplotSpec(1, 1, subplot_spec=gs0[2])
 
 	pos = [
-	    gs1[0],
-	    gs1[1],  # Two subplots on the top.
+	    *gs1[:upper_subs],  # upper_subs many subplots on the top.
 	    gs2[0],
 	    gs2[1],  # Three subplots in the middle.
 	    gs2[2],
@@ -68,9 +72,10 @@ def __diff(axs: Axes, original: ndarray, denoised: ndarray):
 	axs.set_title("original-denoised logscaled")
 
 	axs.set_xlabel("Time")
-	axs.set_ylabel("Amplitude")
+	axs.set_ylabel("Space")
 
-	axs.plot(diff, label="Difference between denoised and subtracted signal")
+	axs.matshow(diff.T,
+	            label="Difference between denoised and subtracted signal")
 
 
 @jit(nogil=True, parallel=True)
@@ -113,7 +118,7 @@ def __diag(axs: Axes, original: ndarray, denoised: ndarray):
 	axs.set_title("Signal comparision")
 
 	axs.set_aspect("equal", 'box')
-	var, corr = __var_and_corr(denoised, original)
+	'''var, corr = __var_and_corr(denoised, original)
 	axs.text(
 	    0.7,
 	    0.1,
@@ -126,7 +131,7 @@ def __diag(axs: Axes, original: ndarray, denoised: ndarray):
 	    },
 	    transform=axs.transAxes,
 	)
-
+	'''
 	xll, xul = axs.get_xlim()
 	yll, yul = axs.get_ylim()
 	ll = min(xll, yll)
@@ -223,9 +228,9 @@ def plot_wavedec(time: ndarray,
 	'''
 	# Compute the scales. I hope this makes sense.
 	scales = 2**array(range(int(ceil(log2(true.shape[0])))))
-	dec_true, _ = cwt(true, scales, name_wavelet)
-	dec_noisy, _ = cwt(noisy, scales, name_wavelet)
-	dec_denoised, _ = cwt(denoised, scales, name_wavelet)
+	dec_true, _, _ = cwt(true)
+	dec_noisy, _, _ = cwt(noisy)
+	dec_denoised, _, _ = cwt(denoised)
 
 	axs[2].set_title("Noisy scalogram")
 	make_scalogram(axs[2], dec_noisy)
@@ -237,6 +242,103 @@ def plot_wavedec(time: ndarray,
 	make_scalogram(axs[4], dec_denoised)
 
 	__diff(axs[5], true, denoised)
+	fig.savefig(save)
+	plt.close(fig)
+
+
+def __make_meas_axs(fig, upper_subs):
+	# Define the structure of the figure i.e. the position and number of
+	# its subplots.
+	gs0 = gridspec.GridSpec(4, 1, figure=fig)
+	gs1 = gridspec.GridSpecFromSubplotSpec(1, upper_subs, subplot_spec=gs0[0])
+	gs0_1 = gridspec.GridSpecFromSubplotSpec(1, 2, subplot_spec=gs0[1])
+	gs2 = gridspec.GridSpecFromSubplotSpec(1, 3, subplot_spec=gs0[2])
+	gs3 = gridspec.GridSpecFromSubplotSpec(1, 1, subplot_spec=gs0[3])
+
+	pos = [
+	    *gs1,  # upper_subs many subplots on the top.
+	    *gs0_1,
+	    gs2[0],
+	    gs2[1],  # Three subplots in the middle.
+	    gs2[2],
+	]
+
+	axs: List[Axes] = [fig.add_subplot(pos) for pos in pos]
+	axs.append(
+	    fig.add_subplot(gs3[0])
+	),  # One subplot on the bottom. Maybe the 3D thing needs to be added?)
+	return axs
+
+
+def plot_measurement(true: ndarray,
+                     noisy: ndarray,
+                     denoised: ndarray,
+                     save: str | Path,
+                     name_measurement: str,
+                     name_wavelet="morlet") -> None:
+	"""Produes the relevant plots from the data."""
+
+	relevant_timesteps = vip[name_measurement]
+	plots = len(relevant_timesteps)
+	fig = plt.figure(figsize=(22, 14), dpi=400)
+	axs = __make_meas_axs(fig, plots)
+
+	for ((time, name), axes) in zip(relevant_timesteps, axs[:plots]):
+
+		axes.set_title(name)
+
+		axes.plot(noisy[time, :],
+		          label="Noisy signal",
+		          linewidth=MSIZE,
+		          alpha=0.3,
+		          color="black")
+		axes.plot(denoised[time, :],
+		          label="Denoised signal",
+		          linewidth=1,
+		          color="green")
+		axes.plot(true[time, :],
+		          label="True signal",
+		          linewidth=0.5,
+		          color="red")
+		axes.legend()
+
+	# Plot time
+	axes = axs[-6]
+	point = true.shape[1] // 2
+	axes.set_title(f"Time plot at point {point}")
+
+	axes.plot(noisy[:, point],
+	          label="Noisy signal",
+	          linewidth=MSIZE,
+	          alpha=0.3,
+	          color="black")
+	axes.plot(denoised[:, point],
+	          label="Denoised signal",
+	          linewidth=1,
+	          color="green")
+	axes.plot(true[:, point], label="True signal", linewidth=0.5, color="red")
+	axes.legend()
+
+	__diag(axs[-5], true, denoised)
+
+	# Just take the first relevant point.
+	example_time = relevant_timesteps[-1][0]
+
+	dec_true, _ = cwt(true[example_time], name_wavelet)
+	dec_noisy, _ = cwt(noisy[example_time], name_wavelet)
+	dec_denoised, _ = cwt(denoised[example_time], name_wavelet)
+
+	axs[-4].set_title(f"Noisy scalogram at time {example_time}")
+	make_scalogram(axs[-4], dec_noisy.real)
+
+	axs[-3].set_title(f"True scalogram at time {example_time}")
+	make_scalogram(axs[-3], dec_true.real)
+
+	axs[-2].set_title(f"Denoised scalogram at time {example_time}")
+	make_scalogram(axs[-2], dec_denoised.real)
+
+	__diff(axs[-1], true, denoised)
+	fig.tight_layout()
 	fig.savefig(save)
 	plt.close(fig)
 

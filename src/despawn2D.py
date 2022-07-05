@@ -4,7 +4,7 @@ from math import log2, ceil
 from torch import (Tensor, concat, flip, nn, tensor, zeros, conj)
 from torch.fft import irfft, rfft
 
-from torch.nn.functional import sigmoid
+from torch import sigmoid
 from torch.nn.parameter import Parameter
 from torch.nn import ReplicationPad1d
 
@@ -204,6 +204,7 @@ class Despawn2D(nn.Module):
 		filtered = list(map(self.threshold, wav_coeffs))
 		#filtered = list(wav_coeffs)
 
+		filtered_coeffs = list(filtered)
 		# Transform the filtered inputs back.
 		approximation = filtered.pop()
 		for transform in self.backward_transforms:
@@ -213,4 +214,4 @@ class Despawn2D(nn.Module):
 		# call concatenates all wavelet coefficients into one big tensor.
 		return approximation[:, to_pad[0]:input_length + to_pad[1]], reduce(
 		    lambda tensor1, tensor2: concat(tensors=(tensor1, tensor2), dim=-1),
-		    wav_coeffs)
+		    filtered_coeffs)

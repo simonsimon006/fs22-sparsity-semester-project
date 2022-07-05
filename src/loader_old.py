@@ -8,7 +8,7 @@ from typing import Dict, Generator, Iterator, Tuple, Union
 
 import numpy as np
 import scipy.io
-import tensorflow as tf
+#import tensorflow as tf
 from numba import jit
 from numpy import ceil, concatenate, floor, ndarray
 from sklearn.impute import KNNImputer
@@ -71,27 +71,36 @@ def replace_nan(array: ndarray) -> ndarray:
 
 
 @jit(parallel=True)
-def load_train(path: str) -> Tuple[ndarray, ndarray]:
+def load_train(path: str) -> FilledMeasurement:
 	'''Loads the filled and filtered dataset from the matlab file under the specified path.'''
-	data: Dict[str, ndarray] = scipy.io.loadmat(
-	    path, variable_names=["E_filled", "E_filt"])
-	return data["E_filled"].T, data["E_filt"].T
+	filename = pl.Path(path).stem
+	data: Dict[str,
+	           ndarray] = scipy.io.loadmat(path,
+	                                       variable_names=["E_raw", "E_filt"])
+	print(f"Loaded {filename}")
+	starting_cut = 0 if not filename in cutscenes else cutscenes[filename]
+	# BEcause the measurement is redunant in the spatial axis (doubled).
+	spatial_half_index = data["E_raw"].shape[1] // 2
+	res = FilledMeasurement(
+	    replace_nan(data["E_raw"][starting_cut:, :spatial_half_index]),
+	    data["E_filt"][starting_cut:, :spatial_half_index])
+
+	return res
 
 
 #@jit(parallel=True, nogil=True)
 def load_raw(path: Union[str, pl.Path]) -> RawMeasurement:
 	'''Loads the raw (unfilled) and filtered parts of a matlab data file.'''
-	data: Dict[str,
-	           ndarray] = scipy.io.loadmat(path,
-	                                       variable_names=["E_raw", "E_filt"],
-	                                       mat_dtype=True)
+	data: Dict[str, ndarray] = scipy.io.loadmat(
+	    path, variable_names=["E_filled", "E_filt"], mat_dtype=True)
 	filename = pl.Path(path).stem
+
 	print(f"Loaded {filename}")
 	starting_cut = 0 if not filename in cutscenes else cutscenes[filename]
 	# BEcause the measurement is redunant in the spatial axis (doubled).
 	spatial_half_index = data["E_raw"].shape[1] // 2
-	res = RawMeasurement(data["E_raw"][starting_cut:, :spatial_half_index].T,
-	                     data["E_filt"][starting_cut:, :spatial_half_index].T)
+	res = RawMeasurement(data["E_raw"][starting_cut:, :spatial_half_index],
+	                     data["E_filt"][starting_cut:, :spatial_half_index])
 	return res
 
 
@@ -117,10 +126,11 @@ def dumb(meas):
 	return res
 
 
+'''
 def make_tf_dataset(
         measurements: Generator[RawMeasurement, None, None]) -> tf.data.Dataset:
-	'''This function transforms a folder of the weird matlab files, represented by measurements, into one big, imputed and padded TensorFlow dataset.'''
-
+	#This function transforms a folder of the weird matlab files, represented by measurements, into one big, imputed and padded TensorFlow dataset.
+	
 	# Impute the NaN values.
 	with PPE(4) as pool:
 		filled = pool.map(dumb, measurements)
@@ -143,6 +153,7 @@ def make_tf_dataset(
 
 	# Make them into a dataset.
 	return tf.data.Dataset.from_tensor_slices((flat_pad, flat_filt))
+'''
 
 
 def make_np_dataset(
