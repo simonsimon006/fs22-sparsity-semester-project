@@ -1,24 +1,19 @@
 """Does all the plotting."""
 
-from functools import reduce
 from pathlib import Path
 from typing import List, Tuple
 
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
-import seaborn as sb
+
 from matplotlib.axes import Axes
+from matplotlib import cm
 from numba import jit
-from numpy import (NaN, absolute, arange, array, log10, ndarray, square,
-                   subtract, concatenate, repeat, kron, log2, ceil)
+from numpy import (NaN, absolute, arange, array, ndarray, square, subtract,
+                   log2, ceil)
 from numpy.fft import rfft
 from ssqueezepy import cwt
 from scipy.stats import pearsonr
-
-vip = {
-    "eps_S2-ZG_04": [(1216, "erster Riss"), (1785, "Zweiter Riss"),
-                     (15600, "Bewehrung teilplastisch")]
-}
 
 
 # From the previous project
@@ -69,6 +64,8 @@ def __coeffs(axs: Axes, coeffs: ndarray, orig_sv: ndarray, cutoff: float):
 
 def __diff(axs: Axes, original: ndarray, denoised: ndarray):
 	diff = absolute(subtract(original, denoised))
+	maximum = absolute(original.max())
+	diff /= maximum
 	axs.set_title("original-denoised logscaled")
 
 	axs.set_xlabel("Time")
@@ -76,6 +73,7 @@ def __diff(axs: Axes, original: ndarray, denoised: ndarray):
 
 	axs.matshow(diff.T,
 	            label="Difference between denoised and subtracted signal")
+	#axs.colorbar()
 
 
 @jit(nogil=True, parallel=True)
@@ -117,7 +115,7 @@ def __diag(axs: Axes, original: ndarray, denoised: ndarray):
 	axs.set_xlabel("Denoised")
 	axs.set_title("Signal comparision")
 
-	axs.set_aspect("equal", 'box')
+	axs.set_aspect("auto", 'box')
 	'''var, corr = __var_and_corr(denoised, original)
 	axs.text(
 	    0.7,
@@ -196,6 +194,7 @@ vip = {
         (3000 - 280, "vollplastisch 2"),
         (4800 - 280, "vollplastisch 3"),
     ],
+    "sine-test": [(200, "Sinus")]
 }
 
 
@@ -328,22 +327,27 @@ def plot_measurement(true: ndarray,
 	dec_noisy, _ = cwt(noisy[example_time], name_wavelet)
 	dec_denoised, _ = cwt(denoised[example_time], name_wavelet)
 
+	# To normalize the data
+
+	maximum = max(dec_noisy.real.max(), dec_true.real.max(),
+	              dec_denoised.real.max())
 	axs[-4].set_title(f"Noisy scalogram at time {example_time}")
-	make_scalogram(axs[-4], dec_noisy.real)
+	make_scalogram(axs[-4], dec_noisy.real / maximum)
 
 	axs[-3].set_title(f"True scalogram at time {example_time}")
-	make_scalogram(axs[-3], dec_true.real)
+	make_scalogram(axs[-3], dec_true.real / maximum)
 
 	axs[-2].set_title(f"Denoised scalogram at time {example_time}")
-	make_scalogram(axs[-2], dec_denoised.real)
+	make_scalogram(axs[-2], dec_denoised.real / maximum)
 
 	__diff(axs[-1], true, denoised)
+	fig.colorbar(cm.ScalarMappable(cmap="magma"))
 	fig.tight_layout()
 	fig.savefig(save)
 	plt.close(fig)
 
 
-def make_scalogram(ax, wavedec_coeffs):
+def make_scalogram(ax, wavedec_coeffs, max=None):
 	'''max_scale_size = len(wavedec_coeffs[-1])
 
 	rows = []
@@ -356,35 +360,8 @@ def make_scalogram(ax, wavedec_coeffs):
 	'''
 	ax.set_xlabel("Shifts")
 	ax.set_ylabel("Scales")
-	ax.imshow(array(wavedec_coeffs),
-	          aspect="auto",
-	          interpolation="nearest",
-	          cmap="magma")
-	#return rows
 
-
-def plot2(original, denoised, name):
-	#fig = plt.figure(figsize=(14, 14), dpi=300)
-	fig, axs = plt.subplots(
-	    1,
-	    4,
-	)
-	fig.set_dpi(400)
-	fig.set_size_inches(20, 6)
-	for x in range(3):
-		t = vip[name][x][0]
-		des = vip[name][x][1]
-		axs[x].plot(original[t, :],
-		            label="Original",
-		            linewidth=MSIZE,
-		            alpha=0.5)
-		axs[x].plot(denoised[t, :], label="Denoised", linewidth=MSIZE)
-		axs[x].legend()
-		axs[x].set_title(des)
-
-	x = original.shape[1] // 2
-	axs[3].plot(original[:, x], label="Original", linewidth=MSIZE, alpha=0.5)
-	axs[3].plot(denoised[:, x], label="Denoised", linewidth=MSIZE)
-	axs[3].legend()
-	axs[3].set_title(f"Time flow at pos {x}")
-	fig.savefig(f"den-{name}.png")
+	coeffs = array(wavedec_coeffs)
+	if max:
+		coeffs /= max
+	ax.imshow(coeffs, aspect="auto", interpolation="nearest", cmap="magma")

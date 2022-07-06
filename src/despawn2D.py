@@ -1,12 +1,14 @@
 from functools import reduce
 from math import log2, ceil
 
-from torch import (Tensor, concat, flip, nn, tensor, zeros, conj)
+from torch import (Tensor, concat, flip, nn, tensor, zeros, conj, unsqueeze,
+                   squeeze)
 from torch.fft import irfft, rfft
 
 from torch import sigmoid
 from torch.nn.parameter import Parameter
-from torch.nn import ReplicationPad1d
+from torch.nn import ReplicationPad1d, ReplicationPad2d
+
 
 
 def sane_circular_pad(input: Tensor, to_pad):
@@ -92,6 +94,31 @@ class ForwardTransformLayer(nn.Module):
 		return details[:, ::2], approximation[:, ::2]
 
 
+class ForwardTransform2D(nn.Module):
+	'''Implements the 2D forward wavelet transform using the previously 1D 
+	transform.'''
+
+	def __init__(self, scaling_H, scaling_V):
+		super(ForwardTransform2D, self).__init__()
+		self.forward_H = ForwardTransformLayer(scaling_H)
+		self.forward_V = ForwardTransformLayer(scaling_V)
+
+	def forward(self, input):
+		# First we transform horizontally
+		h_detail, h_approx = self.forward_H(input)
+		# We concat the details and approximations from above as
+		# tensor((details, approx)) and transpose them so we can process them
+		# vertically. Then we concat that output again and transpose it back.
+
+		hh, hl = self.forward_V(h_detail.T)
+		hh, hl = hh.T, hl.T
+
+		lh, ll = self.forward_V(h_approx.T)
+		lh, ll = lh.T, ll.T
+
+		return (hh, hl, lh), ll
+
+
 class BackwardTransformLayer(nn.Module):
 	'''Expects a tensor with shape (n, m) and computes one backward step over each row, i.e. it iterates over all values of 0...n and then computes the lifting. input_length needs to be equal to m.'''
 
@@ -133,6 +160,29 @@ class BackwardTransformLayer(nn.Module):
 		return details_rec + approx_rec
 
 
+class BackwardTransform2D(nn.Module):
+	'''Implements a 2D wavelet transform using the previously implemented 1D case.'''
+
+	def __init__(self, scaling_H, scaling_V):
+		super(BackwardTransform2D, self).__init__()
+
+		self.backward_H = BackwardTransformLayer(scaling_H)
+		self.backward_V = BackwardTransformLayer(scaling_V)
+
+	def forward(self, input):
+		# Build the whole tensor to implement the transforms. The input is expected to have the order (hh, hl, lh, ll)
+		(hh, hl, lh, ll) = input
+
+		# First reverse the columns.
+		h = self.backward_V((hh.T, hl.T)).T
+		l = self.backward_V((lh.T, ll.T)).T
+
+		# Then reverse the rows.
+		inverse = self.backward_H((h, l))
+
+		return inverse
+
+
 class HardThreshold(nn.Module):
 
 	def __init__(self, alpha=10, b_plus=2, b_minus=1):
@@ -142,18 +192,22 @@ class HardThreshold(nn.Module):
 		self.b_minus = Parameter(b_minus)
 
 	def forward(self, input):
+		# The recursive application is to keep the structure of the
+		# (hh, hl, lh) coeff tuples in an easy way.
+		if type(input) == tuple:
+			return [self.forward(elem) for elem in input]
 		return input * (sigmoid(self.alpha * (input - self.b_plus)) +
 		                sigmoid(-self.alpha * (input + self.b_minus)))
 
 
-class Despawn2D(nn.Module):
+class Despawn(nn.Module):
 	'''Expects the data to come in blocks with shape (n, m). The blocks can have different shapes but the rows of the blocks have to have constant length within a block.'''
 
 	def __init__(self,
 	             levels: int,
 	             scaling: Tensor,
 	             adapt_filters: bool = True):
-		super(Despawn2D, self).__init__()
+		super(Despawn, self).__init__()
 		self.scaling = Parameter(scaling.repeat(levels, 1),
 		                         requires_grad=adapt_filters)
 
@@ -201,8 +255,8 @@ class Despawn2D(nn.Module):
 		wav_coeffs.append(approximation)
 
 		# Filter the coefficients.
-		filtered = list(map(self.threshold, wav_coeffs))
-		#filtered = list(wav_coeffs)
+		#filtered = list(map(self.threshold, wav_coeffs))
+		filtered = list(wav_coeffs)
 
 		filtered_coeffs = list(filtered)
 		# Transform the filtered inputs back.
@@ -215,3 +269,99 @@ class Despawn2D(nn.Module):
 		return approximation[:, to_pad[0]:input_length + to_pad[1]], reduce(
 		    lambda tensor1, tensor2: concat(tensors=(tensor1, tensor2), dim=-1),
 		    filtered_coeffs)
+
+
+class Despawn2D(nn.Module):
+	'''Expects the data to come in blocks with shape (n, m). The blocks can have different shapes but the rows of the blocks have to have constant length within a block.'''
+
+	def __init__(self,
+	             levels: int,
+	             scaling: Tensor,
+	             adapt_filters: bool = True,
+	             filter=True):
+		super(Despawn2D, self).__init__()
+		self.scaling = Parameter(scaling.repeat(levels * 2, 1),
+		                         requires_grad=adapt_filters)
+
+		self.levels = levels
+
+		# Define forward transforms
+		self.forward_transforms = [
+		    ForwardTransform2D(self.scaling[level, :],
+		                       self.scaling[level + 1, :])
+		    for level in range(self.levels)
+		]
+
+		# Define threshold parameters similar to the paper
+		self.alpha = tensor(10.)
+		self.b_plus = tensor(2.)
+		self.b_minus = tensor(1.)
+
+		# Define hard thresholding layer
+		self.threshold = HardThreshold(self.alpha, self.b_plus, self.b_minus)
+
+		# Define backward transformations
+		self.backward_transforms = [
+		    BackwardTransform2D(self.scaling[level, :],
+		                        self.scaling[level + 1, :])
+		    for level in reversed(range(self.levels))
+		]
+		self.filter = filter
+
+	def forward(self, input):
+		# Pad the input on the second axis to the length of a power of two.
+		n, m = input.shape
+
+		desired_n = 2**(ceil(log2(n)))
+		desired_m = 2**(ceil(log2(m)))
+
+		# Pads the input if the input size is not a power of two.
+		# The circular padding is necessary for perfect reconstruction.
+		# And it gives the least amount of coefficients.
+
+		# First the padding for n
+		to_pad_n = (0, desired_n - n)
+
+		# Then the padding for m
+		to_pad_m = (0, desired_m - m)
+		to_pad = (*to_pad_m, *to_pad_n)
+
+		padder = ReplicationPad2d(to_pad)
+		input = unsqueeze(input, dim=0)
+		input = unsqueeze(input, dim=0)
+
+		input = padder(input)
+		input = squeeze(input, dim=0)
+		input = squeeze(input, dim=0)
+
+		approximation = input
+		wav_coeffs = []
+		for transform in self.forward_transforms:
+			details, approximation = transform(approximation)
+			wav_coeffs.append(details)
+		wav_coeffs.append(approximation)
+
+		# Filter the coefficients if the global setting is enabled.
+		if self.filter:
+			filtered = list(map(self.threshold, wav_coeffs))
+		else:
+			filtered = list(wav_coeffs)
+
+		filtered_coeffs = list(filtered)
+		# Transform the filtered inputs back.
+		approximation = filtered.pop()
+		for transform in self.backward_transforms:
+			details = filtered.pop()
+			approximation = transform((*details, approximation))
+		# The index stuff with approximation removes the padding. The reduc
+		# call concatenates all wavelet coefficients into one big tensor.
+		filtered_coeffs_na = map(lambda tup: concat(tup, dim=-1).flatten(),
+		                         filtered_coeffs[:-1])
+		coeffs = reduce(
+		    lambda tensor1, tensor2: concat(tensors=(tensor1, tensor2), dim=-1),
+		    filtered_coeffs_na)
+		# Add the last approx back in
+		coeffs = concat((coeffs, filtered_coeffs[-1].flatten()))
+		approx_cut = approximation[:n, :m]
+
+		return approx_cut, coeffs
