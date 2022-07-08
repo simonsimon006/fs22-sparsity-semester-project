@@ -15,3 +15,4 @@ steelbar/
 *.code-workspace
 *.pt
 sine-figures/
+*.parparquet

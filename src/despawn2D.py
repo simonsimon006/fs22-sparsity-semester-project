@@ -1,37 +1,16 @@
 from functools import reduce
-from math import log2, ceil
+from math import log2, ceil, floor
 
 from torch import (Tensor, concat, flip, nn, tensor, zeros, conj, unsqueeze,
-                   squeeze)
+                   rand, squeeze)
 from torch.fft import irfft, rfft
 
 from torch import sigmoid
 from torch.nn.parameter import Parameter
-from torch.nn import ReplicationPad1d, ReplicationPad2d
 
+from torch.nn import ReflectionPad1d as Pad1d
 
-
-def sane_circular_pad(input: Tensor, to_pad):
-	'''The circular padding function in PyTorch only allows the input to wrap around once. Fascists.'''
-	in_len = input.shape[-1]
-
-	# First calculate how often we can repeat the tensors last dimension
-	# before we need to pad the rest. The first plus one is because PyTorchs
-	# repeat
-	# wants to how many times in total the tensor should be there. Thus, one
-	# for the original length and then plus how many times we want to add.
-	# The second plus one is because we want to "overpad" and then discard the
-	# redundant elements. I do not like PyTorchs pad function.
-	to_repeat = to_pad // in_len + 1 + 1
-
-	# We create a mask of ones where we then multiply the last entry by
-	# to_repeat because .repeat() wants to know which dimensions it shall
-	# keep (i.e. entry in the mask == 1) and which to repeat (i.e. entry in the
-	# mask > 1).
-
-	repeated = input.repeat((1, to_repeat))
-
-	return repeated[:, :(in_len + to_pad)]
+from torch.nn.functional import pad
 
 
 def compute_wavelet(scaling: Tensor) -> Tensor:
@@ -244,7 +223,8 @@ class Despawn(nn.Module):
 		# And it gives the least amount of coefficients.
 		to_pad = ((desired_input_length - input_length) // 2,
 		          ceil((desired_input_length - input_length) / 2))
-		padder = ReplicationPad1d(to_pad)
+		padder = Pad1d(to_pad)
+
 		input = padder(input)
 
 		approximation = input
@@ -280,8 +260,13 @@ class Despawn2D(nn.Module):
 	             adapt_filters: bool = True,
 	             filter=True):
 		super(Despawn2D, self).__init__()
-		self.scaling = Parameter(scaling.repeat(levels * 2, 1),
-		                         requires_grad=adapt_filters)
+		# Allow for random initialization of the filters.
+		if type(scaling) == int:
+			self.scaling = Parameter(rand(levels * 2, scaling),
+			                         requires_grad=adapt_filters)
+		else:
+			self.scaling = Parameter(scaling.repeat(levels * 2, 1),
+			                         requires_grad=adapt_filters)
 
 		self.levels = levels
 
@@ -312,31 +297,40 @@ class Despawn2D(nn.Module):
 		# Pad the input on the second axis to the length of a power of two.
 		n, m = input.shape
 
-		desired_n = 2**(ceil(log2(n)))
-		desired_m = 2**(ceil(log2(m)))
+		n_level = ceil(log2(n))
+		m_level = ceil(log2(m))
+
+		desired_n = 2**(n_level)
+		desired_m = 2**(m_level)
 
 		# Pads the input if the input size is not a power of two.
 		# The circular padding is necessary for perfect reconstruction.
 		# And it gives the least amount of coefficients.
 
+		# TODO go back to padding on both sides.
 		# First the padding for n
-		to_pad_n = (0, desired_n - n)
+		side_n_pad = (desired_n - n) / 2
+		to_pad_n = (floor(side_n_pad), ceil(side_n_pad))
 
 		# Then the padding for m
-		to_pad_m = (0, desired_m - m)
+		side_m_pad = (desired_m - m) / 2
+		to_pad_m = (floor(side_m_pad), ceil(side_m_pad))
+
+		# Now the overall pad.
 		to_pad = (*to_pad_m, *to_pad_n)
 
-		padder = ReplicationPad2d(to_pad)
 		input = unsqueeze(input, dim=0)
 		input = unsqueeze(input, dim=0)
 
-		input = padder(input)
+		input = pad(input, to_pad, mode="circular")
+
 		input = squeeze(input, dim=0)
 		input = squeeze(input, dim=0)
 
 		approximation = input
 		wav_coeffs = []
-		for transform in self.forward_transforms:
+		max_level = min(n_level, m_level)
+		for transform in self.forward_transforms[:max_level]:
 			details, approximation = transform(approximation)
 			wav_coeffs.append(details)
 		wav_coeffs.append(approximation)
@@ -350,7 +344,7 @@ class Despawn2D(nn.Module):
 		filtered_coeffs = list(filtered)
 		# Transform the filtered inputs back.
 		approximation = filtered.pop()
-		for transform in self.backward_transforms:
+		for transform in self.backward_transforms[:max_level]:
 			details = filtered.pop()
 			approximation = transform((*details, approximation))
 		# The index stuff with approximation removes the padding. The reduc
@@ -362,6 +356,7 @@ class Despawn2D(nn.Module):
 		    filtered_coeffs_na)
 		# Add the last approx back in
 		coeffs = concat((coeffs, filtered_coeffs[-1].flatten()))
-		approx_cut = approximation[:n, :m]
+		approx_cut = approximation[to_pad_n[0]:to_pad_n[0] + n,
+		                           to_pad_m[0]:to_pad_m[0] + m]
 
 		return approx_cut, coeffs

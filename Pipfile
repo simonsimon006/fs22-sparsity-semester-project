@@ -16,6 +16,8 @@ ptwt="*"
 ssqueezepy = "*"
 pandas = "*"
 fastparquet = "*"
+pytorch-lightning = "*"
+tqdm = "*"
 
 [dev-packages]
 jupyter="*"

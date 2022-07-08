@@ -66,14 +66,13 @@ def __diff(axs: Axes, original: ndarray, denoised: ndarray):
 	diff = absolute(subtract(original, denoised))
 	maximum = absolute(original.max())
 	diff /= maximum
-	axs.set_title("original-denoised logscaled")
+	axs.set_title("original-denoised")
 
 	axs.set_xlabel("Time")
 	axs.set_ylabel("Space")
 
-	axs.matshow(diff.T,
-	            label="Difference between denoised and subtracted signal")
-	#axs.colorbar()
+	axs.imshow(diff.T,
+	           label="Difference between denoised and subtracted signal")
 
 
 @jit(nogil=True, parallel=True)
@@ -192,7 +191,7 @@ vip = {
         (600 - 280, "elastische Dehnung"),
         (1700 - 280, "vollplastisch 1"),
         (3000 - 280, "vollplastisch 2"),
-        (4800 - 280, "vollplastisch 3"),
+        #        (4800 - 280, "vollplastisch 3"),
     ],
     "sine-test": [(200, "Sinus")]
 }
@@ -328,17 +327,18 @@ def plot_measurement(true: ndarray,
 	dec_denoised, _ = cwt(denoised[example_time], name_wavelet)
 
 	# To normalize the data
-
-	maximum = max(dec_noisy.real.max(), dec_true.real.max(),
-	              dec_denoised.real.max())
+	dec_true = absolute(dec_true)
+	dec_noisy = absolute(dec_noisy)
+	dec_denoised = absolute(dec_denoised)
+	maximum = max(dec_noisy.max(), dec_true.max(), dec_denoised.max())
 	axs[-4].set_title(f"Noisy scalogram at time {example_time}")
-	make_scalogram(axs[-4], dec_noisy.real / maximum)
+	make_scalogram(axs[-4], dec_noisy / maximum)
 
 	axs[-3].set_title(f"True scalogram at time {example_time}")
-	make_scalogram(axs[-3], dec_true.real / maximum)
+	make_scalogram(axs[-3], dec_true / maximum)
 
 	axs[-2].set_title(f"Denoised scalogram at time {example_time}")
-	make_scalogram(axs[-2], dec_denoised.real / maximum)
+	make_scalogram(axs[-2], dec_denoised / maximum)
 
 	__diff(axs[-1], true, denoised)
 	fig.colorbar(cm.ScalarMappable(cmap="magma"))
