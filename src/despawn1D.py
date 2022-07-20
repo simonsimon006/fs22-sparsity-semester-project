@@ -1,6 +1,6 @@
 from functools import reduce
 
-from torch import Tensor, abs, conj, flip, sum, tensor, zeros, sigmoid
+from torch import Tensor, abs, conj, flip, sum, tensor, zeros, sigmoid, mean
 from torch.fft import irfft, rfft
 from torch.nn import Module
 
@@ -11,7 +11,7 @@ from math import ceil, log2
 
 def l1_reg(coeffs):
 	if type(coeffs) == tuple or type(coeffs) == list:
-		return reduce(lambda acc, elem: acc + sum(abs(elem)), coeffs, 0)
+		return reduce(lambda acc, elem: acc + mean(abs(elem)), coeffs, 0)
 	else:
 		return sum(abs(coeffs))
 
@@ -75,66 +75,88 @@ def convolve_downsample(input, filter):
 class ForwardTransformLayer(Module):
 	'''Expects a tensor with shape (n, m) and computes one forward step over each row, i.e. it iterates over all values of 0...n and then computes the lifting. input_length needs to be equal to m.'''
 
-	def __init__(self, scaling):
+	def __init__(self, scaling, scaling_rec):
 		super(ForwardTransformLayer, self).__init__()
 
 		# Store the scaling function filter.
 		self.scaling = scaling
+		self.scaling_rec = scaling_rec
 
 	def forward(self, input):
+		wavelet = compute_wavelet(self.scaling_rec)
 
-		wavelet = compute_wavelet(self.scaling)
+		even = input[:, ::2]
+		odd = input[:, 1::2]
 
-		details = convolve(input, wavelet)
-		approximation = convolve(input, self.scaling)
+		# Predict
+		odd_updated = odd - convolve(even, wavelet)
+		even_updated = even - convolve(odd, self.scaling)
 
-		return details[:, ::2], approximation[:, ::2]
+		return even_updated, odd_updated
+		#details = convolve(input, wavelet)
+		#approximation = convolve(input, self.scaling)
+
+		#return details[:, ::2], approximation[:, ::2]
 
 
 class BackwardTransformLayer(Module):
 	'''Expects a tensor with shape (n, m) and computes one backward step over each row, i.e. it iterates over all values of 0...n and then computes the lifting. input_length needs to be equal to m.'''
 
-	def __init__(self, scaling):
+	def __init__(self, scaling, scaling_rec):
 		super(BackwardTransformLayer, self).__init__()
 
 		# Store the filters.
 		self.scaling = scaling
+		self.scaling_rec = scaling_rec
+
+		self.transpose = True
 
 	def forward(self, input):
 
 		# Compute synthesis filter coefficients
-		wavelet_synthesis = compute_wavelet(self.scaling)
+		wavelet_synthesis = compute_wavelet_synthesis(self.scaling_rec)
 		scaling_synthesis = self.scaling
-
+		'''
 		# Pad the input to an even size.
 		(details, approximation) = input
-
 		# We are creating new tensors so we have to tell them how they should look
 		device = details.device
+		
 		# Interpolate with zeros.
 		filled_details = zeros(details.shape[0],
 		                       details.shape[1] * 2,
 		                       device=device)
-		filled_details[:, ::2] = details
-
 		filled_approximation = zeros(approximation.shape[0],
 		                             approximation.shape[1] * 2,
 		                             device=device)
-
+		filled_details[:, ::2] = details
 		filled_approximation[:, ::2] = approximation
 
 		# Convolve with the reconstruction filters.
 		details_rec = convolve(filled_details,
 		                       wavelet_synthesis,
-		                       transpose=True)
+		                       transpose=self.transpose)
 		approx_rec = convolve(filled_approximation,
 		                      scaling_synthesis,
-		                      transpose=True)
+		                      transpose=self.transpose)
 
 		return details_rec + approx_rec
+		'''
+
+		even, odd = input
+		even_rest = even + convolve(odd, scaling_synthesis, True)
+		odd_rest = odd + convolve(even, wavelet_synthesis, True)
+
+		filled = zeros(even.shape[0], even.shape[1] * 2, device=even.device)
+
+		filled[:, ::2] = even_rest
+		filled[:, 1::2] = odd_rest
+
+		return filled
 
 
 class HardThreshold(Module):
+	'''Implements the hard thresholding function from the DeSpaWn paper.'''
 
 	def __init__(self, alpha=10, b_plus=2, b_minus=1):
 		super(HardThreshold, self).__init__()
@@ -157,6 +179,7 @@ class Despawn(Module):
 	def __init__(self,
 	             levels: int,
 	             scaling: Tensor,
+	             scaling_rec: Tensor,
 	             adapt_filters: bool = True,
 	             reg_loss_fun=l1_reg,
 	             filter=True):
@@ -166,9 +189,16 @@ class Despawn(Module):
 
 		self.levels = levels
 
+		self.scaling = Parameter(scaling.repeat(levels, 1), requires_grad=True)
+		self.scaling_rec = Parameter(scaling_rec.repeat(levels, 1),
+		                             requires_grad=adapt_filters)
+
+		self.levels = levels
+
 		# Define forward transforms
 		self.forward_transforms = [
-		    ForwardTransformLayer(self.scaling[level, :])
+		    ForwardTransformLayer(self.scaling[level, :],
+		                          self.scaling_rec[level, :])
 		    for level in range(self.levels)
 		]
 
@@ -182,9 +212,11 @@ class Despawn(Module):
 
 		# Define backward transformations
 		self.backward_transforms = [
-		    BackwardTransformLayer(self.scaling[level, :])
+		    BackwardTransformLayer(self.scaling[level, :],
+		                           self.scaling_rec[level, :])
 		    for level in reversed(range(self.levels))
 		]
+
 		self.reg_loss_fn = reg_loss_fun
 
 	def forward(self, input):

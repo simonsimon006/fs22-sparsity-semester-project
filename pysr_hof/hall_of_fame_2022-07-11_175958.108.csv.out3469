@@ -1,0 +1,5 @@
+Complexity|MSE|Equation
+1|4.994317|x1
+2|4.1943164|exp(x1)
+3|2.4696467|exp(cosh(0.6207775))
+5|2.2879126|exp(sinh(sinh(cosh(x0))))

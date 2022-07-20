@@ -13,10 +13,10 @@ class ForwardTransform2D(nn.Module):
 	'''Implements the 2D forward wavelet transform using the previously 1D 
 	transform.'''
 
-	def __init__(self, scaling_H, scaling_V):
+	def __init__(self, scaling_H, scaling_V, scaling_rec_H, scaling_rec_V):
 		super(ForwardTransform2D, self).__init__()
-		self.forward_H = ForwardTransformLayer(scaling_H)
-		self.forward_V = ForwardTransformLayer(scaling_V)
+		self.forward_H = ForwardTransformLayer(scaling_H, scaling_rec_H)
+		self.forward_V = ForwardTransformLayer(scaling_V, scaling_rec_V)
 
 	def forward(self, input):
 		# First we transform horizontally
@@ -37,11 +37,11 @@ class ForwardTransform2D(nn.Module):
 class BackwardTransform2D(nn.Module):
 	'''Implements a 2D wavelet transform using the previously implemented 1D case.'''
 
-	def __init__(self, scaling_H, scaling_V):
+	def __init__(self, scaling_H, scaling_V, scaling_rec_H, scaling_rec_V):
 		super(BackwardTransform2D, self).__init__()
 
-		self.backward_H = BackwardTransformLayer(scaling_H)
-		self.backward_V = BackwardTransformLayer(scaling_V)
+		self.backward_H = BackwardTransformLayer(scaling_H, scaling_rec_H)
+		self.backward_V = BackwardTransformLayer(scaling_V, scaling_rec_V)
 
 	def forward(self, input):
 		# Build the whole tensor to implement the transforms. The input is expected to have the order (hh, hl, lh, ll)
@@ -63,40 +63,53 @@ class Despawn2D(nn.Module):
 	def __init__(self,
 	             levels: int,
 	             scaling: Tensor,
+	             scaling_rec: Tensor,
 	             adapt_filters: bool = True,
 	             filter=True,
 	             reg_loss_fun=l1_reg):
 		super(Despawn2D, self).__init__()
 		# Allow for random initialization of the filters.
+		# The levels * 2 is so we can use different filters for the row and
+		# column decomposition.
 		if type(scaling) == int:
 			self.scaling = Parameter(rand(levels * 2, scaling),
 			                         requires_grad=adapt_filters)
+			self.scaling_rec = Parameter(rand(levels * 2, scaling),
+			                             requires_grad=adapt_filters)
 		else:
 			self.scaling = Parameter(scaling.repeat(levels * 2, 1),
 			                         requires_grad=adapt_filters)
+			self.scaling_rec = Parameter(scaling_rec.repeat(levels * 2, 1),
+			                             requires_grad=adapt_filters)
 
 		self.levels = levels
 
 		# Define forward transforms
 		self.forward_transforms = [
-		    ForwardTransform2D(self.scaling[level, :],
-		                       self.scaling[level + 1, :])
-		    for level in range(self.levels)
+		    ForwardTransform2D(
+		        self.scaling[0, :],
+		        self.scaling[0 + 1, :],
+		        self.scaling_rec[0, :],
+		        self.scaling_rec[0 + 1, :],
+		    ) for level in range(self.levels)
 		]
 
 		# Define threshold parameters similar to the paper
-		self.alpha = tensor(10.)
-		self.b_plus = tensor(2.)
-		self.b_minus = tensor(1.)
+		self.alpha = Parameter(tensor(10.))
+		self.b_plus = Parameter(tensor(2.))
+		self.b_minus = Parameter(tensor(1.))
 
 		# Define hard thresholding layer
 		self.threshold = HardThreshold(self.alpha, self.b_plus, self.b_minus)
 
 		# Define backward transformations
 		self.backward_transforms = [
-		    BackwardTransform2D(self.scaling[level, :],
-		                        self.scaling[level + 1, :])
-		    for level in reversed(range(self.levels))
+		    BackwardTransform2D(
+		        self.scaling[0, :],
+		        self.scaling[0 + 1, :],
+		        self.scaling_rec[0, :],
+		        self.scaling_rec[0 + 1, :],
+		    ) for level in reversed(range(self.levels))
 		]
 		self.filter = filter
 		self.reg_loss_fun = reg_loss_fun
@@ -149,9 +162,12 @@ class Despawn2D(nn.Module):
 			filtered = list(wav_coeffs)
 
 		# Computes the regularisation loss on the filtered wavelet coefficients.
-		reg_loss = reduce(lambda acc, coeffs: acc + self.reg_loss_fun(coeffs),
-		                  filtered, 0)
-
+		# level[0] is the level, level[1] are the actual coeffs.
+		# The idea is to penalize finer details.
+		reg_loss = reduce(
+		    lambda acc, level: acc + self.reg_loss_fun(level[1]) * level[0],
+		    enumerate(filtered, 1), 0)
+		reg_loss /= len(filtered)
 		# Transform the filtered inputs back.
 		approximation = filtered.pop()
 		for transform in self.backward_transforms[:max_level]:
