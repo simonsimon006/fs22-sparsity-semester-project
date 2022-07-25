@@ -14,6 +14,7 @@ from numpy import (NaN, absolute, arange, array, ndarray, square, subtract,
 from numpy.fft import rfft
 from ssqueezepy import cwt
 from scipy.stats import pearsonr
+from util import vip
 
 
 # From the previous project
@@ -180,21 +181,6 @@ def __time_and_space(time_axs: Axes, space_axs: Axes, original: ndarray,
 	space_axs.set_ylabel("Strain")
 	space_axs.set_xlabel("Timesteps")
 	space_axs.legend()
-
-
-# The cutoff starting point has to be deducted. If a number is subtracted it is
-# the cutoff value. See Yasmin.
-vip = {
-    "eps_S2-ZG_04": [(366, "erster Riss"), (935, "Zweiter Riss"),
-                     (14750, "Bewehrung teilplastisch")],
-    "eps_yl_k3": [
-        (600 - 280, "elastische Dehnung"),
-        (1700 - 280, "vollplastisch 1"),
-        (3000 - 280, "vollplastisch 2"),
-        #        (4800 - 280, "vollplastisch 3"),
-    ],
-    "sine-test": [(200, "Sinus")]
-}
 
 
 def plot_wavedec(time: ndarray,

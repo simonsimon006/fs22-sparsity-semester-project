@@ -7,6 +7,7 @@ from torch.nn import Module
 from torch.nn.parameter import Parameter
 from torch.nn import ReflectionPad1d as Pad1d
 from math import ceil, log2
+from util import convolve
 
 
 def l1_reg(coeffs):
@@ -39,25 +40,6 @@ def compute_wavelet_synthesis(scaling: Tensor) -> Tensor:
 	return g
 
 
-def convolve(input, filter, transpose=False):
-	'''This function is my attempt at using the FFT to do the convolution. It is much faster than the normal convolution function from PyTorch.'''
-
-	# Length is the length of the input. Some problems with that.
-	input_length = input.shape[-1]
-
-	ra = rfft(input)
-	rb = rfft(filter, n=input_length)
-
-	# The transpose convolution is equivalent to complex conjugating the
-	# fft coefficients because of math.
-	if transpose:
-		rb = conj(rb)
-
-	res = irfft(input=ra * rb, n=input_length)
-
-	return res
-
-
 def convolve_downsample(input, filter):
 	'''Convolves and decimates the output size by two. So we do not compute the unnecessary coefficients.'''
 	input_even = input[:, ::2]
@@ -85,18 +67,10 @@ class ForwardTransformLayer(Module):
 	def forward(self, input):
 		wavelet = compute_wavelet(self.scaling_rec)
 
-		even = input[:, ::2]
-		odd = input[:, 1::2]
+		details = convolve(input, wavelet)
+		approximation = convolve(input, self.scaling)
 
-		# Predict
-		odd_updated = odd - convolve(even, wavelet)
-		even_updated = even - convolve(odd, self.scaling)
-
-		return even_updated, odd_updated
-		#details = convolve(input, wavelet)
-		#approximation = convolve(input, self.scaling)
-
-		#return details[:, ::2], approximation[:, ::2]
+		return details[:, ::2], approximation[:, ::2]
 
 
 class BackwardTransformLayer(Module):
@@ -116,12 +90,12 @@ class BackwardTransformLayer(Module):
 		# Compute synthesis filter coefficients
 		wavelet_synthesis = compute_wavelet_synthesis(self.scaling_rec)
 		scaling_synthesis = self.scaling
-		'''
+
 		# Pad the input to an even size.
 		(details, approximation) = input
 		# We are creating new tensors so we have to tell them how they should look
 		device = details.device
-		
+
 		# Interpolate with zeros.
 		filled_details = zeros(details.shape[0],
 		                       details.shape[1] * 2,
@@ -141,18 +115,6 @@ class BackwardTransformLayer(Module):
 		                      transpose=self.transpose)
 
 		return details_rec + approx_rec
-		'''
-
-		even, odd = input
-		even_rest = even + convolve(odd, scaling_synthesis, True)
-		odd_rest = odd + convolve(even, wavelet_synthesis, True)
-
-		filled = zeros(even.shape[0], even.shape[1] * 2, device=even.device)
-
-		filled[:, ::2] = even_rest
-		filled[:, 1::2] = odd_rest
-
-		return filled
 
 
 class HardThreshold(Module):

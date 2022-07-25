@@ -1,9 +1,9 @@
 '''Provides functions to load and preprocess the data.'''
-from functools import reduce
 import pathlib as pl
 from collections import namedtuple
-from concurrent.futures import ThreadPoolExecutor as TPE
 from concurrent.futures import ProcessPoolExecutor as PPE
+from concurrent.futures import ThreadPoolExecutor as TPE
+from functools import reduce
 from typing import Dict, Generator, Iterator, Tuple, Union
 
 import numpy as np
@@ -13,17 +13,12 @@ from numba import jit
 from numpy import ceil, concatenate, floor, ndarray
 from sklearn.impute import KNNImputer
 
+from util import cutscenes
+
 MAX_SIZE = 8192
 RawMeasurement = namedtuple("RawMeasurement", ["Raw", "Filtered"])
 FilledMeasurement = namedtuple("FilledMeasurement", ["Filled", "Filtered"])
 PaddedMeasurement = namedtuple("PaddedMeasurement", ["Padded", "Filtered"])
-
-cutscenes = {
-    "eps_yl_w3": 770,
-    "eps_yl_k3": 280,
-    "eps_S3-ZG_H03": 500,
-    "eps_S2-ZG_04": 850
-}
 
 
 @jit(parallel=True, nogil=True)
@@ -78,13 +73,22 @@ def load_train(path: str) -> FilledMeasurement:
 	           ndarray] = scipy.io.loadmat(path,
 	                                       variable_names=["E_raw", "E_filt"])
 	print(f"Loaded {filename}")
-	starting_cut = 0 if not filename in cutscenes else cutscenes[filename]
-	# BEcause the measurement is redunant in the spatial axis (doubled).
-	spatial_half_index = data["E_raw"].shape[1] // 2
-	res = FilledMeasurement(
-	    replace_nan(data["E_raw"][starting_cut:, :spatial_half_index]),
-	    data["E_filt"][starting_cut:, :spatial_half_index])
+	starting_cut = 0 if not filename in cutscenes else cutscenes[filename][0]
+	half = "left" if not filename in cutscenes else cutscenes[filename][1]
 
+	# Because the measurement is redunant in the spatial axis (doubled).
+	spatial_half_index = data["E_raw"].shape[1] // 2
+
+	# Now select which side to use based on Yasmins guess. Sometimes one side
+	# is better than the other, due to measurement stuff. We trust Yasmin.
+	if half == "right":
+		res = FilledMeasurement(
+		    replace_nan(data["E_raw"][starting_cut:, spatial_half_index:]),
+		    data["E_filt"][starting_cut:, spatial_half_index:])
+	else:
+		res = FilledMeasurement(
+		    replace_nan(data["E_raw"][starting_cut:, :spatial_half_index]),
+		    data["E_filt"][starting_cut:, :spatial_half_index])
 	return res
 
 

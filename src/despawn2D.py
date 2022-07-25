@@ -8,6 +8,8 @@ from torch.nn.parameter import Parameter
 from despawn1D import (BackwardTransformLayer, ForwardTransformLayer,
                        HardThreshold, l1_reg)
 
+from util import PadState, pad_wrap
+
 
 class ForwardTransform2D(nn.Module):
 	'''Implements the 2D forward wavelet transform using the previously 1D 
@@ -71,26 +73,20 @@ class Despawn2D(nn.Module):
 		# Allow for random initialization of the filters.
 		# The levels * 2 is so we can use different filters for the row and
 		# column decomposition.
-		if type(scaling) == int:
-			self.scaling = Parameter(rand(levels * 2, scaling),
-			                         requires_grad=adapt_filters)
-			self.scaling_rec = Parameter(rand(levels * 2, scaling),
-			                             requires_grad=adapt_filters)
-		else:
-			self.scaling = Parameter(scaling.repeat(levels * 2, 1),
-			                         requires_grad=adapt_filters)
-			self.scaling_rec = Parameter(scaling_rec.repeat(levels * 2, 1),
-			                             requires_grad=adapt_filters)
+		self.scaling = Parameter(scaling.repeat(levels * 2, 1),
+		                         requires_grad=adapt_filters)
+		self.scaling_rec = Parameter(scaling_rec.repeat(levels * 2, 1),
+		                             requires_grad=adapt_filters)
 
 		self.levels = levels
 
 		# Define forward transforms
 		self.forward_transforms = [
 		    ForwardTransform2D(
-		        self.scaling[0, :],
-		        self.scaling[0 + 1, :],
-		        self.scaling_rec[0, :],
-		        self.scaling_rec[0 + 1, :],
+		        self.scaling[level, :],
+		        self.scaling[level + 1, :],
+		        self.scaling_rec[level, :],
+		        self.scaling_rec[level + 1, :],
 		    ) for level in range(self.levels)
 		]
 
@@ -105,53 +101,57 @@ class Despawn2D(nn.Module):
 		# Define backward transformations
 		self.backward_transforms = [
 		    BackwardTransform2D(
-		        self.scaling[0, :],
-		        self.scaling[0 + 1, :],
-		        self.scaling_rec[0, :],
-		        self.scaling_rec[0 + 1, :],
+		        self.scaling[level, :],
+		        self.scaling[level + 1, :],
+		        self.scaling_rec[level, :],
+		        self.scaling_rec[level + 1, :],
 		    ) for level in reversed(range(self.levels))
 		]
 		self.filter = filter
 		self.reg_loss_fun = reg_loss_fun
 
 	def forward(self, input):
-		# Pad the input on the second axis to the length of a power of two.
-		n, m = input.shape
-
-		n_level = ceil(log2(n))
-		m_level = ceil(log2(m))
-
-		desired_n = 2**(n_level)
-		desired_m = 2**(m_level)
-
-		# Pads the input if the input size is not a power of two.
-		# The circular padding is necessary for perfect reconstruction.
-		# And it gives the least amount of coefficients.
-
-		# First the padding for n
-		side_n_pad = (desired_n - n) / 2
-		to_pad_n = (floor(side_n_pad), ceil(side_n_pad))
-
-		# Then the padding for m
-		side_m_pad = (desired_m - m) / 2
-		to_pad_m = (floor(side_m_pad), ceil(side_m_pad))
-
-		# Now the overall pad.
-		to_pad = (*to_pad_m, *to_pad_n)
-
-		input = unsqueeze(input, dim=0)
-		input = unsqueeze(input, dim=0)
-
-		input = pad(input, to_pad, mode="replicate")
-
-		input = squeeze(input, dim=0)
-		input = squeeze(input, dim=0)
-
 		approximation = input
 		wav_coeffs = []
-		max_level = min(n_level, m_level) + 1
-		for transform in self.forward_transforms[:max_level]:
+
+		# Store the info about when we pad levels. We pad the different
+		# levels to an even size, so that we do not need all the coefficients
+		# for an overall padding.
+		# Also, this way we can use arbitrary numbers of levels and do not need
+		# to stick to the max size of the normal decomposition. This is useful
+		# if, e.g. the vertical dimension is much larger than the horizontal
+		# one.
+		pad_info = []
+		for transform in self.forward_transforms:
+			# Prepare our markers for padding.
+			vert = False
+			horiz = False
+
+			# Check how we need to pad the input
+			if approximation.shape[0] % 2 != 0:
+				v_pad = (0, 1)
+				vert = True
+			else:
+				v_pad = (0, 0)
+			if approximation.shape[1] % 2 != 0:
+				h_pad = (0, 1)
+				horiz = True
+			else:
+				h_pad = (0, 0)
+
+			# Create and enter a new padding entry.
+			padinfo = PadState(vert, horiz)
+			pad_info.append(padinfo)
+
+			# Create the structure that tells torchs pad function
+			# how to pad our input.
+			to_pad = (*h_pad, *v_pad)
+
+			# Pad the input with our convenience wrapper.
+			approximation = pad_wrap(approximation, to_pad)
+
 			details, approximation = transform(approximation)
+
 			wav_coeffs.append(details)
 		wav_coeffs.append(approximation)
 
@@ -164,18 +164,23 @@ class Despawn2D(nn.Module):
 		# Computes the regularisation loss on the filtered wavelet coefficients.
 		# level[0] is the level, level[1] are the actual coeffs.
 		# The idea is to penalize finer details.
-		reg_loss = reduce(
-		    lambda acc, level: acc + self.reg_loss_fun(level[1]) * level[0],
-		    enumerate(filtered, 1), 0)
+
+		reg_loss = reduce(lambda acc, level: acc + self.reg_loss_fun(level),
+		                  filtered, 0)
 		reg_loss /= len(filtered)
+
 		# Transform the filtered inputs back.
 		approximation = filtered.pop()
-		for transform in self.backward_transforms[:max_level]:
+
+		for transform in self.backward_transforms:
+			level_pad_info = pad_info.pop()
 			details = filtered.pop()
 			approximation = transform((*details, approximation))
 
-		# The index stuff with approximation removes the padding.
-		approx_cut = approximation[to_pad_n[0]:to_pad_n[0] + n,
-		                           to_pad_m[0]:to_pad_m[0] + m]
+			# If we padded the level we need to cut it back again.
+			if level_pad_info.vert:
+				approximation = approximation[:-1, :]
+			if level_pad_info.horiz:
+				approximation = approximation[:, :-1]
 
-		return approx_cut, reg_loss
+		return approximation, reg_loss
