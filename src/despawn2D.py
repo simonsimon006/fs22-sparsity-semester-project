@@ -151,6 +151,7 @@ class Despawn2D(nn.Module):
 		# Computes the regularisation loss on the filtered wavelet coefficients.
 		reg_loss = reduce(lambda acc, coeffs: acc + self.reg_loss_fun(coeffs),
 		                  filtered, 0)
+		reg_loss /= len(filtered)
 
 		# Transform the filtered inputs back.
 		approximation = filtered.pop()

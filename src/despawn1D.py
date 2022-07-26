@@ -1,6 +1,6 @@
 from functools import reduce
 
-from torch import Tensor, abs, conj, flip, sum, tensor, zeros, sigmoid
+from torch import Tensor, abs, conj, flip, mean, tensor, zeros, sigmoid
 from torch.fft import irfft, rfft
 from torch.nn import Module
 
@@ -11,9 +11,9 @@ from math import ceil, log2
 
 def l1_reg(coeffs):
 	if type(coeffs) == tuple or type(coeffs) == list:
-		return reduce(lambda acc, elem: acc + sum(abs(elem)), coeffs, 0)
+		return reduce(lambda acc, elem: acc + mean(abs(elem)), coeffs, 0)
 	else:
-		return sum(abs(coeffs))
+		return mean(abs(coeffs))
 
 
 def compute_wavelet(scaling: Tensor) -> Tensor:
