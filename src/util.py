@@ -1,9 +1,11 @@
-from torch import rand_like, linspace, sin, pi, Tensor, device, cartesian_prod, squeeze, unsqueeze, conj, concat, isnan
-from torch.nn.functional import pad, conv2d, conv_transpose2d
-from typing import Tuple
 from collections import namedtuple
-from torch.fft import rfft, irfft
-#from torch.nn.functional import conv2d, conv_transpose2d
+from functools import reduce
+from typing import Tuple
+
+from torch import (Tensor, abs, cartesian_prod, conj, device, flip, linspace,
+                   mean, pi, rand_like, sin, squeeze, unsqueeze)
+from torch.fft import irfft, rfft
+from torch.nn.functional import pad
 
 
 def make_noisy_sine(
@@ -12,11 +14,11 @@ def make_noisy_sine(
     sine_amplitude=10,
     noise_amplitude=4,
     spatial_resolution=4096,
-    device=device("cpu")) -> Tuple[Tensor, Tensor, Tensor]:
+    dev=device("cpu")) -> Tuple[Tensor, Tensor, Tensor]:
 	'''Creates a noisy sine for training. The sine degrades over the measurements (e.g. to higher vertical indexes). The frequency is expected to be in Hz.'''
 	# Create the wanted time.
-	time = linspace(0, 1, timesteps, device=device)
-	space = linspace(0, 1, spatial_resolution, device=device)
+	time = linspace(0, 1, timesteps, device=dev)
+	space = linspace(0, 1, spatial_resolution, device=dev)
 
 	fabric = cartesian_prod(time, space)
 	# Produce the sine. Compute the angular frequency from the freq given in Hz.
@@ -29,8 +31,7 @@ def make_noisy_sine(
 	# Create the random noise (0 to 1), shift it to (-0.5, 0.5) and multiply it
 	# by noise_amplitude to get it up to the desired strength. The two is so
 	# that the amplitude is as expected and not just the elongation.
-	noise = 2 * noise_amplitude * (rand_like(weakened_signal, device=device) -
-	                               0.5)
+	noise = 2 * noise_amplitude * (rand_like(weakened_signal, device=dev) - 0.5)
 
 	# Create the desired signal.
 	data = weakened_signal + noise
@@ -85,12 +86,41 @@ def pad_wrap(input, padding, mode="replicate"):
 	return input
 
 
+def l1_reg(coeffs):
+	if type(coeffs) == tuple or type(coeffs) == list:
+		return reduce(lambda acc, elem: acc + mean(abs(elem)), coeffs, 0)
+	else:
+		return mean(abs(coeffs))
+
+
+def compute_wavelet(scaling: Tensor) -> Tensor:
+	'''Computes the wavelet filter coefficients from the scaling coefficients. The formula is g_k = h_(M-k-1) where M is the filter length of h. The formula stems from a paper.'''
+
+	# flip copies / clones the input.
+	g = flip(scaling, (-1, ))
+	g[1::2] *= -1
+
+	return g
+
+
+# Only required for biorthogonal instead of orthogonal wavelets.
+def compute_scaling_synthesis(scaling: Tensor) -> Tensor:
+	return flip(scaling, (-1, ))
+
+
+def compute_wavelet_synthesis(scaling: Tensor) -> Tensor:
+	# flip copies / clones the input.
+	g = flip(scaling, (-1, ))
+	g[::2] *= -1
+
+	return g
+
+
 def convolve(input, filter, transpose=False):
 	'''This function is my attempt at using the FFT to do the convolution. It is much faster than the normal convolution function from PyTorch.'''
 
 	# Length is the length of the input. Some problems with that.
 	input_length = input.shape[-1]
-	filt_len = filter.shape[-1]
 
 	ra = rfft(input)
 	rb = rfft(filter, n=input_length)
@@ -105,20 +135,15 @@ def convolve(input, filter, transpose=False):
 	return res
 
 
-def wrong_convolve(input, filter, transpose=False):
-	print(input.shape)
-	input = unsqueeze(input, dim=0)
-	input = unsqueeze(input, dim=0)
+def convolve_downsample(input, filter):
+	'''Convolves and decimates the output size by two. So we do not compute the unnecessary coefficients.'''
+	input_even = input[:, ::2]
+	input_odd = input[:, 1::2]
 
-	filter = unsqueeze(filter, dim=0)
-	filter = unsqueeze(filter, dim=0)
-	filter = unsqueeze(filter, dim=0)
-	if transpose:
-		result = conv_transpose2d(input, filter)
-	else:
-		result = conv2d(input, filter, padding="same")
+	filter_even = filter[::2]
+	filter_odd = filter[1::2]
 
-	result = squeeze(result, dim=0)
-	result = squeeze(result, dim=0)
-	print(result.shape)
-	return result
+	even = convolve(input_even, filter_even)
+	odd = convolve(input_odd, filter_odd)
+
+	return even + odd

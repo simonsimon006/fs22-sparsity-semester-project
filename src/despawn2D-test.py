@@ -1,7 +1,8 @@
+from datetime import datetime
+
 import pandas as pd
 from pywt import Wavelet
 from torch import device, float32, load, manual_seed, norm, save, tensor
-from torch.cuda.amp import GradScaler, autocast
 from torch.nn import MSELoss as MainLoss
 from torch.optim import LBFGS
 from torch.optim import AdamW as Opt
@@ -12,21 +13,22 @@ from despawn2D import Despawn2D as Denoiser
 from loader_old import load_train
 from plotter import plot_measurement
 from util import make_noisy_sine
-from datetime import datetime
+
 # Set random seed for desterministic behaviour
 manual_seed(0)
 
 device = device("cuda:0")
 REC_TEST = False
 USE_AMP = True
-EPOCHS = 1 if REC_TEST else 100
-LEARNING_RATE = 1e-3
-REG_FACT = 1e-2
-REC_FACT = 1e-5
+EPOCHS = 1 if REC_TEST else 3000
+LEARNING_RATE = 8e-5
+REG_FACT = 1e-3
+REC_FACT = 1e-6
 MEASUREMENT = "eps_yl_k3"
 # More entries -> longer filters seem to be better. NN can adapt more I think.
 WAVELET_NAME = "dmey"
 ADAPT_FILTERS = True
+LEVELS = 13
 
 NOW = str(datetime.now().timestamp()).replace(".", "_")
 store_file_name = f"start_{NOW}-{MEASUREMENT}-{WAVELET_NAME}.pkl"
@@ -41,16 +43,19 @@ save(signal, "signal.pt")
 save(data, "data.pt")
 '''
 
-signal = load("signal.pt").to(device=device, dtype=float32)[:4001, :]
-data = load("data.pt").to(device=device, dtype=float32)[:4001, :]
-losses = lambda den, reg_loss: REC_FACT * loss_fn(signal, denoised
+signal = load("signal.pt").to(device=device, dtype=float32)
+data = load("data.pt").to(device=device, dtype=float32)
+losses = lambda den, reg_loss: REC_FACT * loss_fn(signal, den
                                                   ) + REG_FACT * reg_loss
 
 SCALING = tensor(Wavelet(WAVELET_NAME).dec_hi, device=device)
-
+print(SCALING.shape)
 loss_fn = MainLoss(reduction="mean")
 
-model = Denoiser(11, SCALING, adapt_filters=ADAPT_FILTERS, filter=not REC_TEST)
+model = Denoiser(LEVELS,
+                 SCALING,
+                 adapt_filters=ADAPT_FILTERS,
+                 filter=not REC_TEST)
 
 model = model.to(device)
 
@@ -104,10 +109,12 @@ with trange(EPOCHS) as t:
 			#scheduler.step(loss)
 
 		# Rebalances the weighing of the components with a moving average.
-		if epoch % 300 == 0:
+		if epoch % 1000 == 0:
 			REG_FACT = 1 / (4 * reg_loss.detach()) + (3 / 4) * REG_FACT
 			REC_FACT = 1 / (4 * error.detach()) + (3 / 4) * REC_FACT
 
+		# Store the progress.
+		if epoch % 300 == 0:
 			progress_store.to_pickle(store_file_name)
 		optimizer.zero_grad()
 
@@ -137,6 +144,7 @@ progress_store.loc[EPOCHS] = {
     "reconstruction_factor": float(REC_FACT),
     "regularization_factor": float(REG_FACT)
 }
+
 progress_store.to_pickle(store_file_name)
 
 signal = signal.cpu().detach().numpy()

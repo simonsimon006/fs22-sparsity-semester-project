@@ -1,75 +1,13 @@
 from functools import reduce
 
-from torch import Tensor, abs, conj, flip, mean, tensor, zeros, sigmoid
+from torch import Tensor, tensor, zeros, sigmoid
 from torch.fft import irfft, rfft
 from torch.nn import Module
 
 from torch.nn.parameter import Parameter
 from torch.nn import ReflectionPad1d as Pad1d
 from math import ceil, log2
-
-
-def l1_reg(coeffs):
-	if type(coeffs) == tuple or type(coeffs) == list:
-		return reduce(lambda acc, elem: acc + mean(abs(elem)), coeffs, 0)
-	else:
-		return mean(abs(coeffs))
-
-
-def compute_wavelet(scaling: Tensor) -> Tensor:
-	'''Computes the wavelet filter coefficients from the scaling coefficients. The formula is g_k = h_(M-k-1) where M is the filter length of h. The formula stems from a paper.'''
-
-	# flip copies / clones the input.
-	g = flip(scaling, (-1, ))
-	g[1::2] *= -1
-
-	return g
-
-
-# Only required for biorthogonal instead of orthogonal wavelets.
-def compute_scaling_synthesis(scaling: Tensor) -> Tensor:
-	return flip(scaling, (-1, ))
-
-
-def compute_wavelet_synthesis(scaling: Tensor) -> Tensor:
-	# flip copies / clones the input.
-	g = flip(scaling, (-1, ))
-	g[::2] *= -1
-
-	return g
-
-
-def convolve(input, filter, transpose=False):
-	'''This function is my attempt at using the FFT to do the convolution. It is much faster than the normal convolution function from PyTorch.'''
-
-	# Length is the length of the input. Some problems with that.
-	input_length = input.shape[-1]
-
-	ra = rfft(input)
-	rb = rfft(filter, n=input_length)
-
-	# The transpose convolution is equivalent to complex conjugating the
-	# fft coefficients because of math.
-	if transpose:
-		rb = conj(rb)
-
-	res = irfft(input=ra * rb, n=input_length)
-
-	return res
-
-
-def convolve_downsample(input, filter):
-	'''Convolves and decimates the output size by two. So we do not compute the unnecessary coefficients.'''
-	input_even = input[:, ::2]
-	input_odd = input[:, 1::2]
-
-	filter_even = filter[::2]
-	filter_odd = filter[1::2]
-
-	even = convolve(input_even, filter_even)
-	odd = convolve(input_odd, filter_odd)
-
-	return even + odd
+from util import l1_reg, convolve, compute_wavelet
 
 
 class ForwardTransformLayer(Module):

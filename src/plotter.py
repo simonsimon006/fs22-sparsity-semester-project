@@ -5,15 +5,14 @@ from typing import List, Tuple
 
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
-
-from matplotlib.axes import Axes
 from matplotlib import cm
+from matplotlib.axes import Axes
 from numba import jit
-from numpy import (NaN, absolute, arange, array, ndarray, square, subtract,
-                   log2, ceil)
+from numpy import (NaN, absolute, arange, array, ceil, log2, ndarray, square,
+                   subtract)
 from numpy.fft import rfft
-from ssqueezepy import cwt
 from scipy.stats import pearsonr
+from ssqueezepy import cwt
 
 
 # From the previous project
