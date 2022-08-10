@@ -1,13 +1,13 @@
 from functools import reduce
 
-from torch import Tensor, nn, tensor
+from torch import Tensor, nn, tensor, sigmoid
 from torch.nn.parameter import Parameter
 
 from despawn1D import (BackwardTransformLayer, ForwardTransformLayer,
                        HardThreshold)
 from util import PadState, l1_reg, pad_wrap
 
-PADD = 15
+PADD = 50
 
 
 class ForwardTransform2D(nn.Module):
@@ -66,7 +66,8 @@ class Despawn2D(nn.Module):
 	             scaling: Tensor,
 	             adapt_filters: bool = True,
 	             filter=True,
-	             reg_loss_fun=l1_reg):
+	             reg_loss_fun=l1_reg,
+	             padding=PADD):
 		super(Despawn2D, self).__init__()
 		# Allow for random initialization of the filters.
 		# The levels * 2 is so we can use different filters for the row and
@@ -75,6 +76,9 @@ class Despawn2D(nn.Module):
 		                         requires_grad=adapt_filters)
 
 		self.levels = levels
+		self.filter = filter
+		self.reg_loss_fun = reg_loss_fun
+		self.padding = padding
 
 		# Define forward transforms
 		self.forward_transforms = [
@@ -84,12 +88,18 @@ class Despawn2D(nn.Module):
 		]
 
 		# Define threshold parameters similar to the paper
-		self.alpha = Parameter(tensor(10.))
-		self.b_plus = Parameter(tensor(2.))
-		self.b_minus = Parameter(tensor(1.))
+		'''self.alpha = tensor(1e1)
+		self.b_plus = tensor(2.)
+		self.b_minus = tensor(1e0)'''
 
 		# Define hard thresholding layer
-		self.threshold = HardThreshold(self.alpha, self.b_plus, self.b_minus)
+		self.threshold = HardThreshold(10, 2, 1)
+		'''self.threshold_hh = HardThreshold(self.alpha[0], self.b_plus[0],
+		                                  self.b_minus[0])
+		self.threshold_hl = HardThreshold(self.alpha[1], self.b_plus[1],
+		                                  self.b_minus[1])
+		self.threshold_lh = HardThreshold(self.alpha[2], self.b_plus[2],
+		                                  self.b_minus[2])'''
 
 		# Define backward transformations
 		self.backward_transforms = [
@@ -97,13 +107,19 @@ class Despawn2D(nn.Module):
 		                        self.scaling[level + 1, :])
 		    for level in reversed(range(self.levels))
 		]
-		self.filter = filter
-		self.reg_loss_fun = reg_loss_fun
+
+	def ht(self, input, alpha, b_plus, b_minus):
+		if type(input) in [tuple, list]:
+			return [self.ht(elem, alpha, b_plus, b_minus) for elem in input]
+		scale = (sigmoid(-alpha * (input + b_minus)) +
+		         sigmoid(alpha * (input - b_plus)))
+		return input * scale
 
 	def forward(self, input):
-		wav_coeffs = []
 		# I hope to cut-off boundary errors this way.
-		input = pad_wrap(input, (PADD, PADD, PADD, PADD), mode="replicate")
+		input = pad_wrap(
+		    input, (self.padding, self.padding, self.padding, self.padding),
+		    mode="replicate")
 		approximation = input
 		# Store the info about when we pad levels. We pad the different
 		# levels to an even size, so that we do not need all the coefficients
@@ -113,6 +129,7 @@ class Despawn2D(nn.Module):
 		# if, e.g. the vertical dimension is much larger than the horizontal
 		# one.
 		pad_info = []
+		wav_coeffs = []
 		for transform in self.forward_transforms:
 			# Prepare our markers for padding.
 			vert = False
@@ -147,8 +164,16 @@ class Despawn2D(nn.Module):
 		wav_coeffs.append(approximation)
 
 		# Filter the coefficients if the global setting is enabled.
+		#filtered = []
 		if self.filter:
 			filtered = list(map(self.threshold, wav_coeffs))
+			'''for (hh, hl, lh) in wav_coeffs[:-1]:
+				bh = hh
+				hh = self.threshold_hh(hh)
+				hl = self.threshold_hl(hl)
+				lh = self.threshold_lh(lh)
+				filtered.append((hh, hl, lh))'''
+			#filtered.append(self.threshold(approximation))
 		else:
 			filtered = list(wav_coeffs)
 
@@ -156,11 +181,13 @@ class Despawn2D(nn.Module):
 		# level[0] is the level, level[1] are the actual coeffs.
 		# The idea is to penalize finer details.
 
-		reg_loss = reduce(lambda acc, level: acc + self.reg_loss_fun(level),
-		                  filtered, 0)
-		reg_loss /= len(filtered)
+		#reg_loss = reduce(lambda acc, level: acc + self.reg_loss_fun(level),
+		#                  filtered, 0)
+		#reg_loss /= len(filtered)
 
+		#reg_loss = self.reg_loss_fun(wav_coeffs)
 		# Transform the filtered inputs back.
+		res_filtered = list(filtered)
 		approximation = filtered.pop()
 
 		for transform in self.backward_transforms:
@@ -174,4 +201,5 @@ class Despawn2D(nn.Module):
 			if level_pad_info.horiz:
 				approximation = approximation[:, :-1]
 
-		return approximation[PADD:-PADD, PADD:-PADD], reg_loss
+		return approximation[self.padding:-self.padding,
+		                     self.padding:-self.padding], res_filtered

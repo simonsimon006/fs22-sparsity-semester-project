@@ -1,6 +1,6 @@
 from functools import reduce
 
-from torch import Tensor, tensor, zeros, sigmoid
+from torch import Tensor, tensor, zeros, sigmoid, float32
 from torch.fft import irfft, rfft
 from torch.nn import Module
 
@@ -76,9 +76,9 @@ class HardThreshold(Module):
 
 	def __init__(self, alpha=10, b_plus=2, b_minus=1):
 		super(HardThreshold, self).__init__()
-		self.alpha = Parameter(alpha)
-		self.b_plus = Parameter(b_plus)
-		self.b_minus = Parameter(b_minus)
+		self.alpha = Parameter(tensor(alpha, dtype=float32))
+		self.b_plus = Parameter(tensor(b_plus, dtype=float32))
+		self.b_minus = Parameter(tensor(b_minus, dtype=float32))
 
 	def forward(self, input):
 		# The recursive application is to keep the structure of the

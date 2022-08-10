@@ -3,7 +3,8 @@ from functools import reduce
 from typing import Tuple
 
 from torch import (Tensor, abs, cartesian_prod, conj, device, flip, linspace,
-                   mean, pi, rand_like, sin, squeeze, unsqueeze)
+                   mean, pi, rand_like, sin, squeeze, unsqueeze, sum, sqrt,
+                   count_nonzero)
 from torch.fft import irfft, rfft
 from torch.nn.functional import pad
 
@@ -86,11 +87,55 @@ def pad_wrap(input, padding, mode="replicate"):
 	return input
 
 
-def l1_reg(coeffs):
+def l1_reg2(coeffs):
 	if type(coeffs) == tuple or type(coeffs) == list:
 		return reduce(lambda acc, elem: acc + mean(abs(elem)), coeffs, 0)
 	else:
 		return mean(abs(coeffs))
+
+
+def __general_reg(coeffs, fun):
+	'''Convenience function for a general regularisation. Automatically reduces a list of coefficients such as is used in our despawn implementations.'''
+	acc = 0
+	element_count = 0
+	for level in coeffs:
+		# The last entry is often the approximation tensor and thus we cannot
+		# iterate over it and need to do a case distinction.
+		if type(level) in [tuple, list]:
+			# This could be done in parallel but I am to lazy to figure out how
+			# to do it nicely (and with an actual performance benefit) in
+			# Python.
+			res = reduce(
+			    lambda acca, elem:
+			    (acca[0] + fun(elem), acca[1] + elem.shape.numel()), level,
+			    (0, 0))
+			acc += res[0]
+			element_count += res[1]
+			'''
+			for elem in level:
+				acc += fun(elem)
+				element_count += len(elem)'''
+		else:
+			acc += fun(level)
+			element_count += level.shape.numel()
+	return acc, element_count
+
+
+def l1_reg(coeffs):
+	'''Convenience fun for L1 reg.'''
+	reg_fun = lambda elem: sum(abs(elem))
+	acc, element_count = __general_reg(coeffs, reg_fun)
+
+	return acc / element_count
+
+
+def sqrt_reg(coeffs):
+	'''Convenience fun for weird sqrt reg.'''
+	# The 1e-X term is for numerical stability.
+	reg_fun = lambda elem: sum(sqrt(abs(elem) + 1e-6))
+	acc, element_count = __general_reg(coeffs, reg_fun)
+
+	return acc / element_count
 
 
 def compute_wavelet(scaling: Tensor) -> Tensor:
@@ -147,3 +192,11 @@ def convolve_downsample(input, filter):
 	odd = convolve(input_odd, filter_odd)
 
 	return even + odd
+
+
+def l0_counter(coeffs):
+	'''Convenience fun for weird sqrt reg.'''
+	reg_fun = lambda elem: count_nonzero(elem)
+	count, _ = __general_reg(coeffs, reg_fun)
+
+	return float(count)
