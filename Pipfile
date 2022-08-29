@@ -18,6 +18,7 @@ pandas = "*"
 fastparquet = "*"
 pytorch-lightning = "*"
 tqdm = "*"
+joblib = "*"
 
 [dev-packages]
 jupyter="*"

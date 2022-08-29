@@ -1,4 +1,3 @@
-from cmath import sqrt
 from datetime import datetime
 
 import pandas as pd

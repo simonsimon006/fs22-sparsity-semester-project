@@ -73,8 +73,8 @@ def load_train(path: str) -> FilledMeasurement:
 	           ndarray] = scipy.io.loadmat(path,
 	                                       variable_names=["E_raw", "E_filt"])
 	print(f"Loaded {filename}")
-	starting_cut = 0 if not filename in cutscenes else cutscenes[filename][0]
-	half = "left" if not filename in cutscenes else cutscenes[filename][1]
+	starting_cut = cutscenes[filename][0] if filename in cutscenes else 0
+	half = cutscenes[filename][1] if filename in cutscenes else "left"
 
 	# Because the measurement is redunant in the spatial axis (doubled).
 	spatial_half_index = data["E_raw"].shape[1] // 2

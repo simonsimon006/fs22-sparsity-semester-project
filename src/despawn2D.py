@@ -66,7 +66,6 @@ class Despawn2D(nn.Module):
 	             scaling: Tensor,
 	             adapt_filters: bool = True,
 	             filter=True,
-	             reg_loss_fun=l1_reg,
 	             padding=PADD):
 		super(Despawn2D, self).__init__()
 		# Allow for random initialization of the filters.
@@ -77,7 +76,6 @@ class Despawn2D(nn.Module):
 
 		self.levels = levels
 		self.filter = filter
-		self.reg_loss_fun = reg_loss_fun
 		self.padding = padding
 
 		# Define forward transforms
