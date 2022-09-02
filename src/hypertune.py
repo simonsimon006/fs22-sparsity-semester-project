@@ -37,7 +37,7 @@ def end_ep(epoch, total, l0, model, optimizer):
 
 
 def tune_loop(config, dataloader):
-	model = make_model(config["levels"], config["wav"][1], device="cuda:0")
+	model = make_model(config["levels"], config["wav"][1])
 	opt = make_optimizer(model, 1e-4, 3e-1)
 	train_loop(model=model,
 	           optimizer=opt,
@@ -52,7 +52,7 @@ config = {
     "wav": tune.choice(wavelist.items()),
 }
 scheduler = ASHAScheduler(time_attr="training_iteration",
-                          max_t=10,
+                          max_t=1000,
                           grace_period=5,
                           reduction_factor=2)
 reporter = CLIReporter(parameter_columns=[
@@ -70,7 +70,7 @@ algo = SearchAlgo(random_state_seed=0)
 tune_config = tune.TuneConfig(
     metric="loss",
     mode="min",
-    num_samples=1,
+    num_samples=20,
     scheduler=scheduler,
     search_alg=algo,
 )

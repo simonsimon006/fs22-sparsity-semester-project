@@ -71,7 +71,7 @@ class Despawn2D(nn.Module):
 		# Allow for random initialization of the filters.
 		# The levels * 2 is so we can use different filters for the row and
 		# column decomposition.
-		self.scaling = Parameter(scaling.repeat(levels * 2, 1),
+		self.scaling = Parameter(scaling.repeat(levels * 2, 1).to(self.device),
 		                         requires_grad=adapt_filters)
 
 		self.levels = levels
