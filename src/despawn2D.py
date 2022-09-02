@@ -118,7 +118,7 @@ class Despawn2D(nn.Module):
 		input = pad_wrap(
 		    input, (self.padding, self.padding, self.padding, self.padding),
 		    mode="replicate")
-		approximation = input
+		approximation = input.to(self.scaling.device)
 		# Store the info about when we pad levels. We pad the different
 		# levels to an even size, so that we do not need all the coefficients
 		# for an overall padding.

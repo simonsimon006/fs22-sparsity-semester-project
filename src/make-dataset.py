@@ -1,5 +1,5 @@
 from functools import reduce
-from loader import MeasurementFolderLoader
+from loader import MeasurementFolder
 from tensorflow.data import Dataset
 from tensorflow.io import TFRecordWriter
 from multiprocessing import Pool

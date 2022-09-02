@@ -19,6 +19,8 @@ fastparquet = "*"
 pytorch-lightning = "*"
 tqdm = "*"
 joblib = "*"
+ray = {extras = ["tune"], version = "*"}
+hyperopt = "*"
 
 [dev-packages]
 jupyter="*"

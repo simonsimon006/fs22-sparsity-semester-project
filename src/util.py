@@ -194,9 +194,9 @@ def convolve_downsample(input, filter):
 	return even + odd
 
 
-def l0_counter(coeffs):
-	'''Convenience fun for weird sqrt reg.'''
-	reg_fun = lambda elem: count_nonzero(elem)
+def l0_counter(coeffs, numeric_zero_threshold=1e-9):
+	'''Convenience fun for weird sqrt reg. The zero_threshold value was chosen by numeric convention.'''
+	reg_fun = lambda elem: count_nonzero(elem < numeric_zero_threshold)
 	count, size = __general_reg(coeffs, reg_fun)
 
 	return float(count / size)

@@ -2,7 +2,7 @@ from denoiser import thresh
 from numpy import mean, median, count_nonzero, divide, std
 from jax.numpy.linalg import svd
 import pandas as pd
-from loader import MeasurementFolderLoader
+from loader import MeasurementFolder
 from pathlib import Path
 from collections import namedtuple
 from jax import jit as jax_jit
@@ -63,7 +63,7 @@ def svd_on_selection(dataset, size, jax_key):
 	return jax_key, singular_values
 
 
-dsf = MeasurementFolderLoader(data_folder)
+dsf = MeasurementFolder(data_folder)
 
 store = []
 
