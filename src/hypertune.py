@@ -1,48 +1,38 @@
-from ray import tune
-from ray.air import session, RunConfig
-from ray.tune import CLIReporter
-from ray.tune.search.hyperopt import HyperOptSearch as SearchAlgo
-from ray.tune.schedulers import ASHAScheduler
 import pathlib as pl
-from train_model import *
-from loader import MeasurementFolder
-import torch
-from pywt import Wavelet
-from torch.utils.data import DataLoader
-from functools import partial
 from datetime import datetime
 
-dev = "cuda:0"
+import torch
+from pywt import Wavelet
+from ray import tune
+from ray.air import RunConfig
+from ray.tune import CLIReporter
+from ray.tune.schedulers import ASHAScheduler
+from ray.tune.search.hyperopt import HyperOptSearch as SearchAlgo
+from ray.tune.utils import wait_for_gpu
+
+from train_model import *
 
 NOW = str(datetime.now().timestamp()).replace(".", "_")
 
 run_config = RunConfig(name=NOW)
 wavelist = {
-    name: torch.tensor(Wavelet(name).dec_hi).to(dev)
+    name: torch.tensor(Wavelet(name).dec_hi)
     for name in ["db20", "dmey", "db2", "db10", "bior6.8", "sym20", "sym10"]
 }
 
-factors = [5, 10, 20, 30]
+factors = [5, 10, 20]
 for fac in factors:
 	wavelist[f"{fac}xdmey"] = (torch.tensor(Wavelet("dmey").dec_hi) /
-	                           fac).repeat(fac).to(dev)
+	                           fac).repeat(fac)
 
 
-def end_ep(epoch, total, l0, model, optimizer):
-	'''with tune.checkpoint_dir(epoch) as checkpoint_dir:
-		path = pl.Path(checkpoint_dir) / pl.Path("checkpoint")
-		torch.save((model.state_dict(), optimizer.state_dict()), path)'''
-
-	session.report({"loss": total, "l0": l0})
-
-
-def tune_loop(config, dataloader):
+def tune_loop(config):
+	torch.cuda.empty_cache()
+	wait_for_gpu(target_util=0.3)
 	model = make_model(config["levels"], config["wav"][1])
 	opt = make_optimizer(model, 1e-4, 3e-1)
 	train_loop(model=model,
 	           optimizer=opt,
-	           dataset=dataloader,
-	           epoch_end_fun=end_ep,
 	           wavelet_name=config["wav"][0],
 	           epochs=10000)
 
@@ -52,33 +42,29 @@ config = {
     "wav": tune.choice(wavelist.items()),
 }
 scheduler = ASHAScheduler(time_attr="training_iteration",
-                          max_t=1000,
+                          max_t=5000,
                           grace_period=5,
                           reduction_factor=2)
 reporter = CLIReporter(parameter_columns=[
     "levels",
 ],
-                       metric_columns=["loss", "l0"])
-datasets = DataLoader(
-    MeasurementFolder("/home/simon/Code/semester-project-fs22/store/"),
-    pin_memory=True,
-    batch_size=None,
-)
+                       metric_columns=[
+                           "total_loss", "reconstruction_mse", "l0_pnorm",
+                           "regularization_penalty"
+                       ])
 
 algo = SearchAlgo(random_state_seed=0)
 
 tune_config = tune.TuneConfig(
-    metric="loss",
+    metric="total_loss",
     mode="min",
     num_samples=20,
     scheduler=scheduler,
     search_alg=algo,
 )
-tuner = tune.Tuner(tune.with_resources(partial(tune_loop, dataloader=datasets),
-                                       resources={
-                                           "cpu": 2,
-                                           "gpu": 1,
-                                       }),
+tuner = tune.Tuner(tune.with_resources(tune_loop, resources={
+    "gpu": 1,
+}),
                    tune_config=tune_config,
                    param_space=config,
                    run_config=run_config)

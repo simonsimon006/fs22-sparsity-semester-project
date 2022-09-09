@@ -1,11 +1,14 @@
 from functools import reduce
 
-from torch import Tensor, nn, tensor, sigmoid
+from torch import Tensor, nn, tensor, sigmoid, squeeze, device, has_cuda
 from torch.nn.parameter import Parameter
 
 from despawn1D import (BackwardTransformLayer, ForwardTransformLayer,
                        HardThreshold)
-from util import PadState, l1_reg, pad_wrap
+from util import PadState, compute_scaling_synthesis, compute_wavelet, compute_wavelet_synthesis, l1_reg, pad_wrap
+import ptwt
+from pywt import Wavelet
+from ptwt.wavelets_learnable import SoftOrthogonalWavelet
 
 PADD = 50
 
@@ -58,6 +61,39 @@ class BackwardTransform2D(nn.Module):
 		return inverse
 
 
+class LearnableFilterBank:
+	name = "LearnableWavelet"
+
+	def __init__(self, dec_hi):
+		self.dec_hi = dec_hi
+		self.dec_len = len(dec_hi)
+		self.rec_len = self.dec_len
+		self.dec_lo = compute_wavelet(dec_hi)
+		self.rec_hi = compute_scaling_synthesis(dec_hi)
+		self.rec_lo = compute_wavelet_synthesis(dec_hi)
+
+	'''@property
+	def dec_lo(self):
+		print("dec_lo")
+		return compute_wavelet(self.dec_hi)
+
+	@property
+	def rec_hi(self):
+		return compute_scaling_synthesis(self.dec_hi)
+
+	@property
+	def rec_lo(self):
+		return compute_wavelet_synthesis(self.dec_hi)'''
+
+	@property
+	def filter_bank(self):
+		'''dec_hi = self.dec_hi
+		dec_lo = compute_wavelet(dec_hi)
+		rec_hi = compute_scaling_synthesis(dec_hi)
+		rec_lo = compute_wavelet_synthesis(dec_hi)'''
+		return [self.dec_lo, self.dec_hi, self.rec_lo, self.rec_hi]
+
+
 class Despawn2D(nn.Module):
 	'''Expects the data to come in blocks with shape (n, m). The blocks can have different shapes but the rows of the blocks have to have constant length within a block.'''
 
@@ -66,17 +102,24 @@ class Despawn2D(nn.Module):
 	             scaling: Tensor,
 	             adapt_filters: bool = True,
 	             filter=True,
-	             padding=PADD):
+	             padding=PADD,
+	             wavelet_name="db20"):
 		super(Despawn2D, self).__init__()
 		# Allow for random initialization of the filters.
 		# The levels * 2 is so we can use different filters for the row and
 		# column decomposition.
+
+		#self.bank = SoftOrthogonalWavelet(*scaling)
+		#self.bank.training = True
+		self.device = "cuda:0" if has_cuda else "cpu"
+
 		self.scaling = Parameter(scaling.repeat(levels * 2, 1).to(self.device),
 		                         requires_grad=adapt_filters)
 
 		self.levels = levels
 		self.filter = filter
 		self.padding = padding
+		self.wavelet_name = wavelet_name
 
 		# Define forward transforms
 		self.forward_transforms = [
@@ -85,19 +128,8 @@ class Despawn2D(nn.Module):
 		    for level in range(self.levels)
 		]
 
-		# Define threshold parameters similar to the paper
-		'''self.alpha = tensor(1e1)
-		self.b_plus = tensor(2.)
-		self.b_minus = tensor(1e0)'''
-
 		# Define hard thresholding layer
 		self.threshold = HardThreshold(10, 2, 1)
-		'''self.threshold_hh = HardThreshold(self.alpha[0], self.b_plus[0],
-		                                  self.b_minus[0])
-		self.threshold_hl = HardThreshold(self.alpha[1], self.b_plus[1],
-		                                  self.b_minus[1])
-		self.threshold_lh = HardThreshold(self.alpha[2], self.b_plus[2],
-		                                  self.b_minus[2])'''
 
 		# Define backward transformations
 		self.backward_transforms = [
@@ -113,12 +145,25 @@ class Despawn2D(nn.Module):
 		         sigmoid(alpha * (input - b_plus)))
 		return input * scale
 
+	def forward2(self, input):
+		input = input.to(self.device)
+
+		decomp = ptwt.wavedec2(input,
+		                       self.bank,
+		                       level=self.levels,
+		                       mode="constant")
+		filtered = list(map(self.threshold, decomp))
+		result = ptwt.waverec2(filtered, self.bank)[0]
+		result = squeeze(result, dim=0)
+		result = squeeze(result, dim=0)
+		return result, filtered
+
 	def forward(self, input):
 		# I hope to cut-off boundary errors this way.
 		input = pad_wrap(
 		    input, (self.padding, self.padding, self.padding, self.padding),
 		    mode="replicate")
-		approximation = input.to(self.scaling.device)
+		approximation = input.to(self.device)
 		# Store the info about when we pad levels. We pad the different
 		# levels to an even size, so that we do not need all the coefficients
 		# for an overall padding.
