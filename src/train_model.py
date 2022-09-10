@@ -47,7 +47,7 @@ def train_loop(
     epochs=10,
 ):
 	REG_FACT = 1e-1
-	REC_FACT = 1e-7
+	REC_FACT = 1e-4
 	dataset = DataLoader(
 	    MeasurementFolder("/home/simon/Code/semester-project-fs22/store/"),
 	    batch_size=None,

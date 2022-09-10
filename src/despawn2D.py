@@ -1,6 +1,6 @@
 from functools import reduce
 
-from torch import Tensor, nn, tensor, sigmoid, squeeze, device, has_cuda
+from torch import Tensor, nn, tensor, sigmoid, squeeze, device, has_cuda, float32
 from torch.nn.parameter import Parameter
 
 from despawn1D import (BackwardTransformLayer, ForwardTransformLayer,
@@ -109,8 +109,9 @@ class Despawn2D(nn.Module):
 		# The levels * 2 is so we can use different filters for the row and
 		# column decomposition.
 
-		#self.bank = SoftOrthogonalWavelet(*scaling)
-		#self.bank.training = True
+		fb = LearnableFilterBank(scaling)
+		self.bank = SoftOrthogonalWavelet(*(fb.filter_bank))
+		self.bank.training = True
 		self.device = "cuda:0" if has_cuda else "cpu"
 
 		self.scaling = Parameter(scaling.repeat(levels * 2, 1).to(self.device),
@@ -146,7 +147,7 @@ class Despawn2D(nn.Module):
 		return input * scale
 
 	def forward2(self, input):
-		input = input.to(self.device)
+		input = input.to(dtype=float32, device=self.device)
 
 		decomp = ptwt.wavedec2(input,
 		                       self.bank,
