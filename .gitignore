@@ -16,3 +16,6 @@ steelbar/
 *.pt
 sine-figures/
 *.parparquet
+*run/*
+*.json
+ray_tuner/*

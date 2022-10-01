@@ -1,7 +1,7 @@
 from datetime import datetime
 
 import pandas as pd
-from ray.air import session
+from ray.air import session, Checkpoint
 from torch import device, has_cuda, tensor, inference_mode, load
 from torch.nn import MSELoss as MainLoss
 from torch.optim import AdamW as Opt
@@ -30,14 +30,15 @@ def make_model(max_levels,
 	).to(dev)
 
 
-def make_optimizer(model, lr_wavelets, lr_filter) -> Opt:
+def make_optimizer(model, lr_wavelets) -> Opt:
 	return Opt([{
-	    'params': model.scaling,
-	    "lr": lr_wavelets,
+	    'params': [model.alpha, model.b_minus, model.b_plus],
+	    "lr": 1e-2,
 	}, {
-	    'params': model.threshold.parameters(),
-	    'lr': lr_filter
-	}], )
+	    'params': model.bank.parameters(),
+	    'lr': lr_wavelets
+	}],
+	           lr=1)
 
 
 def train_loop(
@@ -48,6 +49,8 @@ def train_loop(
 ):
 	REG_FACT = 1e-1
 	REC_FACT = 1e-4
+	ORTH_FACT = 1e5
+	VAL_REC_FACT = 1e-4  # 1e-6
 	dataset = DataLoader(
 	    MeasurementFolder("/home/simon/Code/semester-project-fs22/store/"),
 	    batch_size=None,
@@ -55,7 +58,8 @@ def train_loop(
 	validation = load("/home/simon/Code/semester-project-fs22/eps_yl_w3.pt")
 
 	NOW = str(datetime.now().timestamp()).replace(".", "_")
-	store_file_name = f"run_{NOW}.pkl"
+
+	#store_file_name = f"run_{NOW}.pkl"
 
 	def loss_fn(denoised, target):
 		rec_loss = MainLoss(reduction="mean")(denoised, target)
@@ -64,7 +68,7 @@ def train_loop(
 	def combine_loss(rec, reg):
 		return rec * REC_FACT + REG_FACT * reg
 
-	progress_store = pd.DataFrame(columns=(
+	"""progress_store = pd.DataFrame(columns=(
 	    'loss',
 	    'reconstruction_mse',
 	    'regularization_penalty',
@@ -78,29 +82,25 @@ def train_loop(
 	))
 	progress_store.attrs["wavelet"] = wavelet_name
 	progress_store.attrs["epochs"] = epochs
-
+	"""
 	for epoch in range(epochs):
-
-		total = tensor(0.).cuda()
-		rec_loss = tensor(0.).cuda()
-		reg_loss = tensor(0.).cuda()
-		l0_count = tensor(0., requires_grad=False)  #.cuda()
-
 		for (input, target) in dataset:
 			denoised, coeffs = model(input)
 			target = target.to(denoised.device)
 
-			rec_loss += loss_fn(denoised, target)
-			reg_loss += regularisation_fun(coeffs)
-			with inference_mode():
-				l0_count += l0_counter(coeffs)
+			rec_loss = loss_fn(denoised, target)
+			reg_loss = regularisation_fun(coeffs)
+			orth_loss = model.bank.filt_bank_orthogonality_loss()
 
-		total = combine_loss(rec_loss, reg_loss)
+			#with inference_mode():
+			#	l0_count += l0_counter(coeffs)
 
-		total.backward()
+			total = combine_loss(rec_loss, reg_loss) + ORTH_FACT * orth_loss
 
-		optimizer.step()
-		optimizer.zero_grad()
+			total.backward()
+
+			optimizer.step()
+			optimizer.zero_grad()
 
 		with inference_mode():
 			denoised, coeffs = model(tensor(validation[0], device="cuda:0"))
@@ -110,10 +110,17 @@ def train_loop(
 			val_reg_loss = regularisation_fun(coeffs)
 			val_l0_count = l0_counter(coeffs)
 
-			val_total = combine_loss(val_rec_loss, val_reg_loss)
+			val_total = VAL_REC_FACT * val_rec_loss + val_l0_count
+			'''if (epoch) == 2:
+				#REG_FACT = 3 / 4 * REG_FACT + 1 / (4 * float(reg_loss))
+				#REC_FACT = 3 / 4 * REC_FACT + 1 / (4 * float(rec_loss))
+
+				REG_FACT = 1 / float(reg_loss)
+				REC_FACT = 1 / float(rec_loss)
+				ORTH_FACT = 1 / float(orth_loss)'''
 
 		# Store the progress
-		progress_store.loc[epoch] = {
+		'''progress_store.loc[epoch] = {
 		    "loss": float(total),
 		    "reconstruction_mse": float(rec_loss),
 		    "regularization_penalty": float(reg_loss),
@@ -124,18 +131,24 @@ def train_loop(
 		    "val_reconstruction_mse": float(val_rec_loss),
 		    "val_regularization_penalty": float(val_reg_loss),
 		    "val_l0_norm": float(val_l0_count),
-		}
+		}'''
 
 		# Store the progress.
-		if (epoch + 1) % 5 == 0:
-			progress_store.to_pickle(store_file_name)
+		#if (epoch + 1) % 5 == 0:
+		#		progress_store.to_pickle(store_file_name)
 
-		session.report({
-		    "total_loss": float(val_total),
-		    "reconstruction_mse": float(val_rec_loss),
-		    "regularization_penalty": float(val_reg_loss),
-		    "l0_pnorm": float(val_l0_count),
-		})
+		session.report(
+		    {
+		        "total_loss": float(val_total),
+		        "reconstruction_mse": float(val_rec_loss),
+		        "l0_pnorm": float(val_l0_count),
+		        "regularization_penalty": float(val_reg_loss),
+		    },
+		    checkpoint=Checkpoint.from_dict(
+		        dict(epoch=epoch,
+		             model=model.state_dict(),
+		             opt=optimizer.state_dict())))
 	# Also store the computed filters.
-	progress_store.attrs["filters"] = model.scaling.detach().cpu().numpy()
-	progress_store.to_pickle(store_file_name)
+	#progress_store.attrs["filters"] = model.bank.filter_bank.detach().cpu(
+	#).numpy()
+	#progress_store.to_pickle(store_file_name)

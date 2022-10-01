@@ -109,19 +109,23 @@ class Despawn2D(nn.Module):
 		# The levels * 2 is so we can use different filters for the row and
 		# column decomposition.
 
-		fb = LearnableFilterBank(scaling)
-		self.bank = SoftOrthogonalWavelet(*(fb.filter_bank))
+		self.bank = SoftOrthogonalWavelet(*(scaling))
 		self.bank.training = True
 		self.device = "cuda:0" if has_cuda else "cpu"
 
-		self.scaling = Parameter(scaling.repeat(levels * 2, 1).to(self.device),
-		                         requires_grad=adapt_filters)
-
 		self.levels = levels
 		self.filter = filter
-		self.padding = padding
 		self.wavelet_name = wavelet_name
 
+		# Define hard thresholding layer
+		self.alpha = Parameter(tensor(10.))
+		self.b_plus = Parameter(tensor(2.))
+		self.b_minus = Parameter(tensor(1.))
+
+		self.threshold = HardThreshold(self.alpha, self.b_plus, self.b_minus)
+		'''self.padding = padding
+		self.scaling = Parameter(scaling.repeat(levels * 2, 1).to(self.device),
+		                         requires_grad=adapt_filters)
 		# Define forward transforms
 		self.forward_transforms = [
 		    ForwardTransform2D(self.scaling[level, :],
@@ -129,37 +133,34 @@ class Despawn2D(nn.Module):
 		    for level in range(self.levels)
 		]
 
-		# Define hard thresholding layer
-		self.threshold = HardThreshold(10, 2, 1)
-
 		# Define backward transformations
 		self.backward_transforms = [
 		    BackwardTransform2D(self.scaling[level, :],
 		                        self.scaling[level + 1, :])
 		    for level in reversed(range(self.levels))
-		]
+		]'''
 
-	def ht(self, input, alpha, b_plus, b_minus):
+	def ht(self, input):
 		if type(input) in [tuple, list]:
-			return [self.ht(elem, alpha, b_plus, b_minus) for elem in input]
-		scale = (sigmoid(-alpha * (input + b_minus)) +
-		         sigmoid(alpha * (input - b_plus)))
+			return [self.ht(elem) for elem in input]
+		scale = (sigmoid(-self.alpha * (input + self.b_minus)) +
+		         sigmoid(self.alpha * (input - self.b_plus)))
 		return input * scale
 
-	def forward2(self, input):
+	def forward(self, input):
 		input = input.to(dtype=float32, device=self.device)
 
 		decomp = ptwt.wavedec2(input,
 		                       self.bank,
 		                       level=self.levels,
 		                       mode="constant")
-		filtered = list(map(self.threshold, decomp))
+		filtered = list(map(self.ht, decomp))
 		result = ptwt.waverec2(filtered, self.bank)[0]
 		result = squeeze(result, dim=0)
 		result = squeeze(result, dim=0)
 		return result, filtered
 
-	def forward(self, input):
+	def forward1(self, input):
 		# I hope to cut-off boundary errors this way.
 		input = pad_wrap(
 		    input, (self.padding, self.padding, self.padding, self.padding),
