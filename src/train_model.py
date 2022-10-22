@@ -41,12 +41,7 @@ def make_optimizer(model, lr_wavelets) -> Opt:
 	           lr=1)
 
 
-def train_loop(
-    model,
-    optimizer,
-    wavelet_name,
-    epochs=10,
-):
+def train_loop(model, optimizer, wavelet_name, epochs=10, end_call=None):
 	REG_FACT = 1e-1
 	REC_FACT = 1e-4
 	ORTH_FACT = 1e5
@@ -90,8 +85,7 @@ def train_loop(
 
 			rec_loss = loss_fn(denoised, target)
 			reg_loss = regularisation_fun(coeffs)
-			orth_loss = model.bank.filt_bank_orthogonality_loss()
-
+			orth_loss = model.bank.wavelet_loss()  # add wavelet_loss
 			#with inference_mode():
 			#	l0_count += l0_counter(coeffs)
 
@@ -143,11 +137,13 @@ def train_loop(
 		        "reconstruction_mse": float(val_rec_loss),
 		        "l0_pnorm": float(val_l0_count),
 		        "regularization_penalty": float(val_reg_loss),
+		        "training_total_loss": float()
 		    },
 		    checkpoint=Checkpoint.from_dict(
 		        dict(epoch=epoch,
 		             model=model.state_dict(),
 		             opt=optimizer.state_dict())))
+
 	# Also store the computed filters.
 	#progress_store.attrs["filters"] = model.bank.filter_bank.detach().cpu(
 	#).numpy()

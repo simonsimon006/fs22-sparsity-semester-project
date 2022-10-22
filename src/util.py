@@ -1,10 +1,10 @@
 from collections import namedtuple
 from functools import reduce
-from typing import Tuple
+from typing import List, Tuple
 
 from torch import (Tensor, abs, cartesian_prod, conj, device, flip, linspace,
-                   mean, pi, rand_like, sin, squeeze, unsqueeze, sum, sqrt,
-                   count_nonzero)
+                   mean, pi, rand_like, cos, squeeze, unsqueeze, sum, sqrt,
+                   count_nonzero, exp, stack)
 from torch.fft import irfft, rfft
 from torch.nn.functional import pad
 
@@ -40,6 +40,27 @@ def make_noisy_sine(
 	return weakened_signal, data, fabric
 
 
+def make_sines(count: int,
+               n: int,
+               m: int,
+               amplitude=10,
+               freq=5) -> Tuple[List, Tensor]:
+	time = linspace(0, 1, n).repeat((m, 1)).T
+	space = linspace(-1, 1, m)
+
+	# Make a cos falling towards the edges
+	envelope = (1 - abs(space)) * exp(-abs(space))
+	cosine = (amplitude * envelope * cos(2 * pi * freq * space)).repeat((n, 1))
+
+	signal = cosine * time
+
+	noisy_signals = [
+	    amplitude / 3 * (rand_like(signal) - 0.5) + signal for _ in range(count)
+	]
+
+	return noisy_signals, signal
+
+
 cutscenes = {
     "eps_yl_w3": (770, "left"),
     "eps_yl_k3": (280, "left"),
@@ -56,9 +77,9 @@ vip = {
         (600 - 280, "elastische Dehnung"),
         (1700 - 280, "vollplastisch 1"),
         (3000 - 280, "vollplastisch 2"),
-        #        (4800 - 280, "vollplastisch 3"),
+        (4800 - 280, "vollplastisch 3"),
     ],
-    "sine-test": [(200, "Sinus")]
+    "sine-test": [(200, "Cosine 1"), (2000, "Cosine 2"), (5000, "Cosine 3")]
 }
 
 PadState = namedtuple("PadState", ("vert", "horiz"))

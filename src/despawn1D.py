@@ -1,7 +1,6 @@
 from functools import reduce
 
 from torch import Tensor, tensor, zeros, sigmoid, float32
-from torch.fft import irfft, rfft
 from torch.nn import Module
 
 from torch.nn.parameter import Parameter

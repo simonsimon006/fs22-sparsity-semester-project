@@ -21,6 +21,8 @@ joblib = "*"
 ray = {extras = ["tune"], version = "*"}
 hyperopt = "*"
 gputil = "*"
+sympy = "*"
+ssqueezepy = "*"
 
 [dev-packages]
 jupyter="*"
