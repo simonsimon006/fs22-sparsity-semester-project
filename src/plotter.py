@@ -9,7 +9,7 @@ from matplotlib import cm
 from matplotlib.axes import Axes
 from numba import jit
 from numpy import (NaN, absolute, arange, array, ceil, log2, ndarray, square,
-                   subtract)
+                   subtract, linspace)
 from numpy.fft import rfft
 from scipy.stats import pearsonr
 from ssqueezepy import cwt
@@ -71,7 +71,7 @@ def __diff(axs: Axes, original: ndarray, denoised: ndarray):
 
 	axs.set_xlabel("Time")
 	axs.set_ylabel("Space")
-
+	axs.grid(False)
 	axs.imshow(diff.T,
 	           label="Difference between denoised and subtracted signal",
 	           aspect="auto")
@@ -271,20 +271,39 @@ def plot_measurement(true: ndarray,
 	for ((time, name), axes) in zip(relevant_timesteps, axs[:plots]):
 
 		axes.set_title(name)
-
-		axes.plot(noisy[time, :],
-		          label="Noisy signal",
-		          linewidth=MSIZE,
-		          alpha=0.6,
-		          color="black")
-		axes.plot(denoised[time, :],
-		          label="Denoised signal",
-		          linewidth=1,
-		          color="green")
-		axes.plot(true[time, :],
-		          label="True signal",
-		          linewidth=0.5,
-		          color="red")
+		if name_measurement == "sine-test":
+			tt = linspace(-1, 1, 1000)
+			axes.plot(tt,
+			          noisy[time, :],
+			          label="Noisy signal",
+			          linewidth=MSIZE,
+			          alpha=0.6,
+			          color="black")
+			axes.plot(tt,
+			          denoised[time, :],
+			          label="Denoised signal",
+			          linewidth=1,
+			          color="green")
+			axes.plot(tt,
+			          true[time, :],
+			          label="True signal",
+			          linewidth=0.5,
+			          color="red")
+			axes.set_ylim(bottom=-10, top=10)
+		else:
+			axes.plot(noisy[time, :],
+			          label="Noisy signal",
+			          linewidth=MSIZE,
+			          alpha=0.6,
+			          color="black")
+			axes.plot(denoised[time, :],
+			          label="Denoised signal",
+			          linewidth=1,
+			          color="green")
+			axes.plot(true[time, :],
+			          label="True signal",
+			          linewidth=0.5,
+			          color="red")
 		axes.sharey(axs[plots - 1])
 		axes.legend()
 
@@ -329,7 +348,11 @@ def plot_measurement(true: ndarray,
 	make_scalogram(axs[-2], dec_denoised / maximum)
 
 	__diff(axs[-1], true, denoised)
-	fig.colorbar(cm.ScalarMappable(cmap="magma"))
+	fig.colorbar(
+	    cm.ScalarMappable(cmap="magma"),
+	    ax=axs[-1],
+	    location='bottom',
+	)
 	fig.tight_layout()
 	fig.savefig(save)
 	plt.close(fig)
@@ -348,7 +371,7 @@ def make_scalogram(ax, wavedec_coeffs, max=None):
 	'''
 	ax.set_xlabel("Shifts")
 	ax.set_ylabel("Scales")
-
+	ax.grid(False)
 	coeffs = array(wavedec_coeffs)
 	if max:
 		coeffs /= max
