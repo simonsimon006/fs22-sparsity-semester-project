@@ -115,8 +115,6 @@ def __diag(axs: Axes, original: ndarray, denoised: ndarray):
 	axs.set_ylabel("True")
 	axs.set_xlabel("Denoised")
 	axs.set_title("Signal comparision")
-
-	axs.set_aspect("auto", 'box')
 	'''var, corr = __var_and_corr(denoised, original)
 	axs.text(
 	    0.7,
@@ -137,6 +135,7 @@ def __diag(axs: Axes, original: ndarray, denoised: ndarray):
 	up = max(xul, yul)
 	axs.set_xlim(left=ll, right=up)
 	axs.set_ylim(bottom=ll, top=up)
+	axs.set_aspect("auto", 'box')
 	axs.legend()
 
 
@@ -352,6 +351,7 @@ def plot_measurement(true: ndarray,
 	    cm.ScalarMappable(cmap="magma"),
 	    ax=axs[-1],
 	    location='bottom',
+	    pad=0.25,
 	)
 	fig.tight_layout()
 	fig.savefig(save)
