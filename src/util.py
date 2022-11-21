@@ -79,7 +79,11 @@ vip = {
         (3000 - 280, "vollplastisch 2"),
         (4800 - 280, "vollplastisch 3"),
     ],
-    "sine-test": [(200, "Cosine 1"), (2000, "Cosine 2"), (5000, "Cosine 3")]
+    "sine-test": [(200, "Cosine 1"), (2000, "Cosine 2"), (5000, "Cosine 3")],
+    "eps_S3-ZG_H03": [(912 - 500, "Erster Riss"), (2210 - 500, "Zweiter Riss"),
+                      (4750 - 500, "vollständiges Rissbild"),
+                      (7690, "Fließbeginn"),
+                      (1200 - 500, "Bewehrung teilplastisch")],
 }
 
 PadState = namedtuple("PadState", ("vert", "horiz"))
